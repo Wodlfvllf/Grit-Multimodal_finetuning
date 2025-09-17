@@ -300,3 +300,33 @@ class GRITTrainer:
         
         logger.info(f"Epoch {epoch+1} - Train Loss: {avg_loss:.4f}, Train Acc: {avg_accuracy:.4f}")
         return avg_loss, avg_accuracy
+    
+    def train(self):
+        """Main training loop"""
+        logger.info("Starting GRIT training...")
+        best_val_acc = 0.0
+        
+        for epoch in range(self.config.num_epochs):
+            # Train
+            train_loss, train_acc = self.train_epoch(epoch)
+            
+            # Validate
+            val_loss, val_acc = self.validate(epoch)
+            
+            # Save best model
+            if val_acc is not None and val_acc > best_val_acc:
+                best_val_acc = val_acc
+                self.save_checkpoint(f"best_grit_model.pt")
+                logger.info(f"Saved best model with val acc: {val_acc:.4f}")
+            
+            # Regular checkpoint
+            if (epoch + 1) % 5 == 0:
+                self.save_checkpoint(f"grit_checkpoint_epoch_{epoch+1}.pt")
+        
+        logger.info("GRIT training completed!")
+        return {
+            'train_losses': self.train_losses,
+            'val_losses': self.val_losses,
+            'train_accuracies': self.train_accuracies,
+            'val_accuracies': self.val_accuracies
+        }
