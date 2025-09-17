@@ -330,3 +330,23 @@ class GRITTrainer:
             'train_accuracies': self.train_accuracies,
             'val_accuracies': self.val_accuracies
         }
+        
+    def save_checkpoint(self, filename: str):
+        """Save checkpoint"""
+        checkpoint = {
+            'epoch': len(self.train_losses),
+            'model_adapters': self.model.save_adapters(),
+            'classification_head': self.classification_head.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'scheduler': self.scheduler.state_dict(),
+            'train_losses': self.train_losses,
+            'val_losses': self.val_losses,
+            'train_accuracies': self.train_accuracies,
+            'val_accuracies': self.val_accuracies,
+            'config': self.config
+        }
+        
+        save_path = Path("checkpoints") / filename
+        save_path.parent.mkdir(exist_ok=True)
+        torch.save(checkpoint, save_path)
+        logger.info(f"Checkpoint saved to {save_path}")
