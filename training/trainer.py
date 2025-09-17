@@ -52,3 +52,69 @@ class GRITTrainer:
         self.val_losses = []
         self.train_accuracies = []
         self.val_accuracies = []
+        
+    def collate_fn(self, batch):
+        """Fixed collate function that handles all fields properly"""
+        max_length = max(item['input_ids'].size(0) for item in batch)
+        
+        batch_data = {
+            'input_ids': [],
+            'attention_mask': [],
+            'labels': [],
+            'answer_labels': [],
+            'pixel_values': [],
+            'image_grid_thw': [],  # Added this
+            'questions': [],
+            'answers': [],
+            'image_ids': []
+        }
+        
+        for item in batch:
+            # Pad sequences
+            input_ids = item['input_ids']
+            attention_mask = item['attention_mask']
+            labels = item['labels']
+            
+            pad_length = max_length - input_ids.size(0)
+            if pad_length > 0:
+                input_ids = torch.cat([input_ids, torch.zeros(pad_length, dtype=input_ids.dtype)])
+                attention_mask = torch.cat([attention_mask, torch.zeros(pad_length, dtype=attention_mask.dtype)])
+                labels = torch.cat([labels, torch.full((pad_length,), -100, dtype=labels.dtype)])
+            
+            batch_data['input_ids'].append(input_ids)
+            batch_data['attention_mask'].append(attention_mask)
+            batch_data['labels'].append(labels)
+            batch_data['answer_labels'].append(item['answer_label'])
+            
+            # Handle visual inputs
+            if item['pixel_values'] is not None:
+                batch_data['pixel_values'].append(item['pixel_values'])
+            else:
+                # If no pixel values, create a dummy tensor or handle appropriately
+                batch_data['pixel_values'].append(torch.zeros(3, 224, 224))  # Dummy tensor
+            
+            # Handle image_grid_thw
+            if item['image_grid_thw'] is not None:
+                batch_data['image_grid_thw'].append(item['image_grid_thw'][0])
+            else:
+                # Default tensor if missing
+                batch_data['image_grid_thw'].append(torch.tensor([1, 30, 40]))
+            
+            batch_data['questions'].append(item['question'])
+            batch_data['answers'].append(item['answer'])
+            batch_data['image_ids'].append(item['image_id'])
+        
+        # Stack tensors - NOW INCLUDING THE MISSING ONES
+        result = {
+            'input_ids': torch.stack(batch_data['input_ids']),
+            'attention_mask': torch.stack(batch_data['attention_mask']),
+            'labels': torch.stack(batch_data['labels']),
+            'answer_labels': torch.stack(batch_data['answer_labels']),
+            'pixel_values': torch.stack(batch_data['pixel_values']),  # ADDED THIS
+            'image_grid_thw': torch.stack(batch_data['image_grid_thw']),  # ADDED THIS
+            'questions': batch_data['questions'],
+            'answers': batch_data['answers'],
+            'image_ids': batch_data['image_ids']
+        }
+        
+        return result
