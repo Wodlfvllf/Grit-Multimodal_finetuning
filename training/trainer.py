@@ -197,3 +197,13 @@ class GRITTrainer:
             'reprojection_reg': reprojection_reg,
             'classification_logits': classification_logits
         }
+        
+    def compute_accuracy(self, logits, labels):
+        """Compute accuracy"""
+        valid_mask = labels != -100
+        if valid_mask.sum() == 0:
+            return 0.0
+        
+        predictions = torch.argmax(logits[valid_mask], dim=-1)
+        correct = (predictions == labels[valid_mask]).float()
+        return correct.mean().item()
