@@ -139,3 +139,61 @@ class GRITTrainer:
         return torch.optim.lr_scheduler.CosineAnnealingLR(
             self.optimizer, T_max=total_steps, eta_min=1e-6
         )
+        
+    def compute_grit_loss(self, outputs, batch):
+        """Compute GRIT-specific loss with regularization"""
+        # Language modeling loss
+        lm_loss = F.cross_entropy(
+            outputs.logits.view(-1, outputs.logits.size(-1)),
+            batch['labels'].view(-1),
+            ignore_index=-100
+        )
+        
+        # Get hidden states for classification
+        if hasattr(outputs, 'hidden_states') and outputs.hidden_states is not None:
+            last_hidden = outputs.hidden_states[-1]
+            pooled_hidden = last_hidden.mean(dim=1)
+        else:
+            # Fallback
+            pooled_hidden = outputs.logits.mean(dim=1)[:, :self.model.base_model.config.hidden_size]
+        
+        # Classification loss
+        classification_logits = self.classification_head(pooled_hidden)
+        valid_mask = batch['answer_labels'] != -100
+        
+        if valid_mask.sum() > 0:
+            cls_loss = F.cross_entropy(
+                classification_logits[valid_mask],
+                batch['answer_labels'][valid_mask]
+            )
+        else:
+            cls_loss = torch.tensor(0.0, device=classification_logits.device)
+        
+        # Curvature regularization
+        curvature_reg = 0.0
+        for wrapper in self.model.grit_wrappers:
+            if wrapper.kfac.A is not None and wrapper.kfac.G is not None:
+                A_trace = torch.trace(wrapper.kfac.A)
+                G_trace = torch.trace(wrapper.kfac.G)
+                curvature_reg += (A_trace + G_trace) / 2
+        
+        curvature_reg = self.config.lambda_curvature * curvature_reg / len(self.model.grit_wrappers)
+        
+        # Reprojection regularization (L2 norm of parameters)
+        reprojection_reg = 0.0
+        for wrapper in self.model.grit_wrappers:
+            reprojection_reg += torch.norm(wrapper.lora_A) + torch.norm(wrapper.lora_B)
+        
+        reprojection_reg = self.config.lambda_reprojection * reprojection_reg / len(self.model.grit_wrappers)
+        
+        # Total loss
+        total_loss = 0.7 * lm_loss + 0.3 * cls_loss + curvature_reg + reprojection_reg
+        
+        return {
+            'total_loss': total_loss,
+            'lm_loss': lm_loss,
+            'cls_loss': cls_loss,
+            'curvature_reg': curvature_reg,
+            'reprojection_reg': reprojection_reg,
+            'classification_logits': classification_logits
+        }
