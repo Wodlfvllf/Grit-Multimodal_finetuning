@@ -2,6 +2,18 @@
 # ============================================================================
 # Main Training Script
 # ============================================================================
+from .utils import *
+from .data import VQADataset
+from .models import GRITModel, GRITConfig
+from .training import GRITTrainer
+from transformers import AutoProcessor
+from qwen_vl import Qwen2VLForConditionalGeneration
+import torch
+import os
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from typing import List, Dict
+from .utils.util import *
 
 def main():
     """Main training function"""

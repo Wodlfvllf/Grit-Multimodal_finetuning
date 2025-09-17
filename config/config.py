@@ -1,6 +1,4 @@
 
-
-
 @dataclass
 class GRITConfig:
     """Configuration for GRIT fine-tuning"""
