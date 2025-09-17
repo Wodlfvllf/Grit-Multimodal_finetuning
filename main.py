@@ -2,7 +2,7 @@
 # ============================================================================
 # Main Training Script
 # ============================================================================
-from .utils import *
+from .utils import KFACStatistics, damp_and_invert
 from .data import VQADataset
 from .models import GRITModel, GRITConfig
 from .training import GRITTrainer
