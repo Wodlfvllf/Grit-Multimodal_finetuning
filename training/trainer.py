@@ -22,20 +22,16 @@ class GRITTrainer:
     
     def __init__(self, 
                  model: GRITModel, 
+                 processor,  # Store processor
                  train_dataset: VQADataset,
                  val_dataset: Optional[VQADataset], 
-                 config: GRITConfig,
-                 classes_to_idx: Dict[str, int], 
-                 idx_to_classes: Dict[int, str]
+                 config: GRITConfig
                  ):
-        
+        self.processor = processor
         self.model = model
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
         self.config = config
-        self.classes_to_idx = classes_to_idx
-        self.idx_to_classes = idx_to_classes
-        self.n_classes = len(classes_to_idx)
         
         # Create data loaders
         self.train_loader = DataLoader(
@@ -56,12 +52,6 @@ class GRITTrainer:
                 pin_memory=True, 
                 collate_fn=self.collate_fn
             )
-        
-        # Classification head for VQA
-        self.classification_head = nn.Linear(
-            self.model.base_model.config.hidden_size,
-            self.n_classes
-        ).to(config.device)
         
         # Optimizer
         self.optimizer = self._create_optimizer()
@@ -159,7 +149,7 @@ class GRITTrainer:
         for wrapper in self.model.grit_wrappers:
             grit_params.extend([wrapper.lora_A, wrapper.lora_B])
         
-        all_params = grit_params + list(self.classification_head.parameters())
+        all_params = grit_params
         
         return torch.optim.AdamW(
             all_params,
@@ -177,33 +167,8 @@ class GRITTrainer:
     def compute_grit_loss(self, outputs, batch):
         """Compute GRIT-specific loss with regularization"""
         # Language modeling loss
-        lm_loss = F.cross_entropy(
-            outputs.logits.view(-1, outputs.logits.size(-1)),
-            batch['labels'].view(-1),
-            ignore_index=-100
-        )
-        
-        # Get hidden states for classification
-        if hasattr(outputs, 'hidden_states') and outputs.hidden_states is not None:
-            last_hidden = outputs.hidden_states[-1]
-            pooled_hidden = last_hidden.mean(dim=1)
-        else:
-            # Fallback
-            pooled_hidden = outputs.logits.mean(dim=1)[:, :self.model.base_model.config.hidden_size]
-        
-        # Classification loss
-        classification_logits = self.classification_head(pooled_hidden)
-        valid_mask = batch['answer_labels'] != -100
-        
-        if valid_mask.sum() > 0:
-            cls_loss = F.cross_entropy(
-                classification_logits[valid_mask],
-                batch['answer_labels'][valid_mask]
-            )
-        else:
-            cls_loss = torch.tensor(0.0, device=classification_logits.device)
-        
-        # Curvature regularization
+        lm_loss = outputs.loss
+
         curvature_reg = 0.0
         for wrapper in self.model.grit_wrappers:
             if wrapper.kfac.A is not None and wrapper.kfac.G is not None:
@@ -221,15 +186,13 @@ class GRITTrainer:
         reprojection_reg = self.config.lambda_reprojection * reprojection_reg / len(self.model.grit_wrappers)
         
         # Total loss
-        total_loss = 0.7 * lm_loss + 0.3 * cls_loss + curvature_reg + reprojection_reg
+        total_loss = 0.7 * lm_loss + curvature_reg + reprojection_reg
         
         return {
             'total_loss': total_loss,
             'lm_loss': lm_loss,
-            'cls_loss': cls_loss,
             'curvature_reg': curvature_reg,
             'reprojection_reg': reprojection_reg,
-            'classification_logits': classification_logits
         }
         
     def compute_accuracy(self, logits, labels):
@@ -248,7 +211,7 @@ class GRITTrainer:
         self.classification_head.train()
         
         epoch_loss = 0.0
-        epoch_accuracy = 0.0
+        # epoch_accuracy = 0.0
         num_batches = 0
         
         progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.config.num_epochs}")
@@ -319,29 +282,59 @@ class GRITTrainer:
                     self.optimizer.zero_grad()
             
             # Update metrics
-            accuracy = self.compute_accuracy(loss_dict['classification_logits'], batch['answer_labels'])
+            # accuracy = self.compute_accuracy(loss_dict['classification_logits'], batch['answer_labels'])
             epoch_loss += loss.item() * self.config.gradient_accumulation_steps
-            epoch_accuracy += accuracy
+            # epoch_accuracy += accuracy
             num_batches += 1
             
             # Update progress bar
             progress_bar.set_postfix({
                 'loss': f"{loss.item() * self.config.gradient_accumulation_steps:.4f}",
-                'acc': f"{accuracy:.4f}",
+                # 'acc': f"{accuracy:.4f}",
                 'lm_loss': f"{loss_dict['lm_loss'].item():.4f}",
-                'cls_loss': f"{loss_dict['cls_loss'].item():.4f}"
+                # 'cls_loss': f"{loss_dict['cls_loss'].item():.4f}"
             })
             
             self.scheduler.step()
         
         avg_loss = epoch_loss / num_batches
-        avg_accuracy = epoch_accuracy / num_batches
+        # avg_accuracy = epoch_accuracy / num_batches
         
         self.train_losses.append(avg_loss)
-        self.train_accuracies.append(avg_accuracy)
+        # self.train_accuracies.append(avg_accuracy)
         
-        logger.info(f"Epoch {epoch+1} - Train Loss: {avg_loss:.4f}, Train Acc: {avg_accuracy:.4f}")
-        return avg_loss, avg_accuracy
+        logger.info(f"Epoch {epoch+1} - Train Loss: {avg_loss:.4f}")
+        return avg_loss
+    
+    def validate(self, epoch):
+        """Validation loop"""
+        if not self.val_dataset:
+            return None
+        
+        self.model.eval()
+        total_loss = 0
+        
+        with torch.no_grad():
+            for batch in tqdm(self.val_loader, desc=f"Validation"):
+                batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v
+                        for k, v in batch.items()}
+                
+                outputs = self.model(
+                    input_ids=batch['input_ids'],
+                    attention_mask=batch['attention_mask'],
+                    pixel_values=batch.get('pixel_values'),
+                    image_grid_thw=batch.get('image_grid_thw'),
+                    labels=batch['labels']
+                )
+                
+                total_loss += outputs.loss.item()
+        
+        avg_loss = total_loss / len(self.val_loader)
+        self.val_losses.append(avg_loss)
+        logger.info(f"Epoch {epoch+1} - Val Loss: {avg_loss:.4f}")
+        
+        self.model.train()
+        return avg_loss
     
     def train(self):
         """Main training loop"""
@@ -350,11 +343,11 @@ class GRITTrainer:
         
         for epoch in range(self.config.num_epochs):
             # Train
-            train_loss, train_acc = self.train_epoch(epoch)
-            
+            train_loss = self.train_epoch(epoch)
+
             # Validate
-            val_loss, val_acc = self.validate(epoch)
-            
+            val_loss = self.validate(epoch)
+            val_acc = None  # Placeholder if accuracy is not computed
             # Save best model
             if val_acc is not None and val_acc > best_val_acc:
                 best_val_acc = val_acc
@@ -369,8 +362,6 @@ class GRITTrainer:
         return {
             'train_losses': self.train_losses,
             'val_losses': self.val_losses,
-            'train_accuracies': self.train_accuracies,
-            'val_accuracies': self.val_accuracies
         }
         
     def save_checkpoint(self, filename: str):
@@ -383,8 +374,6 @@ class GRITTrainer:
             'scheduler': self.scheduler.state_dict(),
             'train_losses': self.train_losses,
             'val_losses': self.val_losses,
-            'train_accuracies': self.train_accuracies,
-            'val_accuracies': self.val_accuracies,
             'config': self.config
         }
         

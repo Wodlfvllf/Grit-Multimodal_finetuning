@@ -19,36 +19,7 @@ from .utils.util import *
 
 def main():
     """Main training function"""
-    
-    # Dataset paths
-    DATASET_ROOT = '/root/GritProject/data/dataset/'
-    ANSWER_SPACE_PATH = '/root/GritProject/data/dataset/answer_space.txt'
-    print(ANSWER_SPACE_PATH)
-    csv_path = '/root/GritProject/data/dataset/data.csv'
-    image_root = '/root/GritProject/data/dataset/images/'
-    
-    # Load answer space
-    with open(ANSWER_SPACE_PATH, 'r') as f:
-        classes = [line.strip() for line in f if line.strip()]
-    
-    classes_to_idx = {cls: idx for idx, cls in enumerate(classes)}
-    idx_to_classes = {idx: cls for idx, cls in enumerate(classes)}
-    
-    logger.info(f"Loaded {len(classes)} answer classes")
-    
-    # Load data
-    df = pd.read_csv(csv_path)
-    all_data = [
-        {'question': q, 'answer': a.split(',')[0], 'image_id': i}
-        for q, a, i in zip(df['question'], df['answer'], df['image_id'])
-    ]
-    
-    # Split data
-    train_data, test_data = train_test_split(all_data, test_size=0.2, random_state=42)
-    train_data, val_data = train_test_split(train_data, test_size=0.1, random_state=42)
-    
-    logger.info(f"Data splits: Train={len(train_data)}, Val={len(val_data)}, Test={len(test_data)}")
-    
+        
     # Create configuration
     config = GRITConfig()
     logger.info(f"Configuration: {config}")
@@ -69,19 +40,17 @@ def main():
     model = model.to(config.device)
     
     # Create datasets
-    train_dataset = VQADataset(train_data, classes_to_idx, processor, image_root, config)
-    val_dataset = VQADataset(val_data, classes_to_idx, processor, image_root, config)
-    
+    train_dataset = VQADataset(processor, config, split='train')
+    val_dataset = VQADataset(processor, config, split='val')
+
     # Create trainer
     trainer = GRITTrainer(
-        model, train_dataset, val_dataset, config,
-        classes_to_idx, idx_to_classes
+        model, processor, train_dataset, val_dataset, config
     )
     
     # Calculate parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    trainable_params += sum(p.numel() for p in trainer.classification_head.parameters())
     
     logger.info(f"Total parameters: {total_params:,}")
     logger.info(f"Trainable parameters: {trainable_params:,}")
