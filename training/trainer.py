@@ -233,12 +233,18 @@ class GRITTrainer:
         progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.config.num_epochs}")
         
         for batch_idx, batch in enumerate(progress_bar):
+            logger.info(f"Epoch {epoch+1} - Entered training loop, batch {batch_idx+1}/{len(self.train_loader)}")
             # Move to device
             batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v
                     for k, v in batch.items()}
+            logger.info(f"Batch keys: {list(batch.keys())}")
+            logger.info(f"Input IDs shape: {batch['input_ids'].shape}")
+            logger.info(f"Pixel values shape: {batch['pixel_values'].shape}")
+            logger.info(f"Image grid thw shape: {batch['image_grid_thw'].shape}")
             # print(batch['image_grid_thw'].shape)
             # Forward pass
             if self.config.mixed_precision:
+                logger.info(f"Epoch {epoch+1} - Using mixed precision, batch {batch_idx+1}/{len(self.train_loader)}")
                 with autocast():
                     outputs = self.model(
                         input_ids=batch['input_ids'],
@@ -247,6 +253,7 @@ class GRITTrainer:
                         image_grid_thw = batch['image_grid_thw']
                         
                     )
+                    logger.info(f"Model outputs obtained")
                     loss_dict = self.compute_grit_loss(outputs, batch)
                     loss = loss_dict['total_loss'] / self.config.gradient_accumulation_steps
                 
@@ -266,6 +273,7 @@ class GRITTrainer:
                     self.scaler.update()
                     self.optimizer.zero_grad()
             else:
+                logger.info(f"Epoch {epoch+1} - Using standard precision, batch {batch_idx+1}/{len(self.train_loader)}")
                 outputs = self.model(
                     input_ids=batch['input_ids'],
                     attention_mask=batch['attention_mask'],

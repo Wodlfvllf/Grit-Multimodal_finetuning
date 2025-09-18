@@ -21,10 +21,11 @@ def main():
     """Main training function"""
     
     # Dataset paths
-    DATASET_ROOT = '../data/dataset/'
-    ANSWER_SPACE_PATH = f'{DATASET_ROOT}/answer_space.txt'
-    csv_path = f'{DATASET_ROOT}/data.csv'
-    image_root = f'{DATASET_ROOT}/images'
+    DATASET_ROOT = '/root/GritProject/data/dataset/'
+    ANSWER_SPACE_PATH = '/root/GritProject/data/dataset/answer_space.txt'
+    print(ANSWER_SPACE_PATH)
+    csv_path = '/root/GritProject/data/dataset/data.csv'
+    image_root = '/root/GritProject/data/dataset/images/'
     
     # Load answer space
     with open(ANSWER_SPACE_PATH, 'r') as f:

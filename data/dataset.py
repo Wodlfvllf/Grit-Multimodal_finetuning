@@ -7,7 +7,50 @@ import os
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoProcessor
+from torch.utils.data import Dataset, DataLoader
+from PIL import Image
 from ..config import GRITConfig
+
+def format_data(sample):
+    return {
+      "images": [sample["image"]],
+      "messages": [
+
+          {
+              "role": "system",
+              "content": [
+                  {
+                      "type": "text",
+                      "text": system_message
+                  }
+              ],
+          },
+          {
+              "role": "user",
+              "content": [
+                  {
+                      "type": "image",
+                      "image": sample["image"],
+                  },
+                  {
+                      "type": "text",
+                      "text": sample['query'],
+                  }
+              ],
+          },
+          {
+              "role": "assistant",
+              "content": [
+                  {
+                      "type": "text",
+                      "text": sample["label"][0]
+                  }
+              ],
+          },
+      ]
+      }
+    
+    
 class VQADataset(Dataset):
     """VQA Dataset class"""
     
@@ -18,6 +61,11 @@ class VQADataset(Dataset):
         self.processor = processor
         self.image_root_path = image_root_path
         self.config = config
+        self.system_message = """You are a Vision Language Model specialized in interpreting visual data from chart images.
+                                Your task is to analyze the provided chart image and respond to queries with concise answers, 
+                                usually a single word, number, or short phrase.The charts include a variety of types (e.g., 
+                                line charts, bar charts) and contain colors, labels, and text.Focus on delivering accurate, 
+                                succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
     
     def __len__(self):
         return len(self.vqa_data)

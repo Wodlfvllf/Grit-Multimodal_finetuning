@@ -6,6 +6,8 @@ from .grit_layer import LinearWithGRIT
 from .replace_grit_modules import replace_linear_with_grit
 import logging
 from ..config import GRITConfig
+logger = logging.getLogger(__name__)
+
 class GRITModel(nn.Module):
     """Main GRIT model wrapper"""
     
