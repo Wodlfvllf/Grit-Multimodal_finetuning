@@ -79,70 +79,79 @@ class GRITTrainer:
         self.val_accuracies = []
         
     def collate_fn(self, batch):
-        """Fixed collate function that handles all fields properly"""
+        """Optimized collate function for Qwen2-VL training"""
+        
+        # Determine max length for padding
         max_length = max(item['input_ids'].size(0) for item in batch)
         
-        batch_data = {
-            'input_ids': [],
-            'attention_mask': [],
-            'labels': [],
-            'answer_labels': [],
-            'pixel_values': [],
-            'image_grid_thw': [],  # Added this
-            'questions': [],
-            'answers': [],
-            'image_ids': []
-        }
+        # Initialize batch containers
+        batch_input_ids = []
+        batch_attention_mask = []
+        batch_labels = []
+        batch_pixel_values = []
+        batch_image_grid_thw = []
+        
+        # Optional fields for debugging/evaluation
+        batch_questions = []
+        batch_answers = []
+        batch_image_ids = []
         
         for item in batch:
-            # Pad sequences
+            # Pad sequences to max_length
             input_ids = item['input_ids']
             attention_mask = item['attention_mask']
             labels = item['labels']
             
             pad_length = max_length - input_ids.size(0)
-            if pad_length > 0:
-                input_ids = torch.cat([input_ids, torch.zeros(pad_length, dtype=input_ids.dtype)])
-                attention_mask = torch.cat([attention_mask, torch.zeros(pad_length, dtype=attention_mask.dtype)])
-                labels = torch.cat([labels, torch.full((pad_length,), -100, dtype=labels.dtype)])
             
-            batch_data['input_ids'].append(input_ids)
-            batch_data['attention_mask'].append(attention_mask)
-            batch_data['labels'].append(labels)
-            batch_data['answer_labels'].append(item['answer_label'])
+            if pad_length > 0:
+                pad_token_id = self.processor.tokenizer.pad_token_id
+                input_ids = torch.cat([
+                    input_ids, 
+                    torch.full((pad_length,), pad_token_id, dtype=input_ids.dtype)
+                ])
+                attention_mask = torch.cat([
+                    attention_mask, 
+                    torch.zeros(pad_length, dtype=attention_mask.dtype)
+                ])
+                labels = torch.cat([
+                    labels, 
+                    torch.full((pad_length,), -100, dtype=labels.dtype)  # -100 for ignore_index
+                ])
+            
+            batch_input_ids.append(input_ids)
+            batch_attention_mask.append(attention_mask)
+            batch_labels.append(labels)
             
             # Handle visual inputs
             if item['pixel_values'] is not None:
-                batch_data['pixel_values'].append(item['pixel_values'])
-            else:
-                # If no pixel values, create a dummy tensor or handle appropriately
-                batch_data['pixel_values'].append(torch.zeros(3, 224, 224))  # Dummy tensor
+                batch_pixel_values.append(item['pixel_values'])
             
-            # Handle image_grid_thw
             if item['image_grid_thw'] is not None:
-                batch_data['image_grid_thw'].append(item['image_grid_thw'][0])
-            else:
-                # Default tensor if missing
-                batch_data['image_grid_thw'].append(torch.tensor([1, 30, 40]))
+                batch_image_grid_thw.append(item['image_grid_thw'])
             
-            batch_data['questions'].append(item['question'])
-            batch_data['answers'].append(item['answer'])
-            batch_data['image_ids'].append(item['image_id'])
+            # Optional fields
+            batch_questions.append(item['question'])
+            batch_answers.append(item['answer'])
+            batch_image_ids.append(item['image_id'])
         
-        # Stack tensors - NOW INCLUDING THE MISSING ONES
+        # Create final batch dictionary
         result = {
-            'input_ids': torch.stack(batch_data['input_ids']),
-            'attention_mask': torch.stack(batch_data['attention_mask']),
-            'labels': torch.stack(batch_data['labels']),
-            'answer_labels': torch.stack(batch_data['answer_labels']),
-            'pixel_values': torch.stack(batch_data['pixel_values']),  # ADDED THIS
-            'image_grid_thw': torch.stack(batch_data['image_grid_thw']),  # ADDED THIS
-            'questions': batch_data['questions'],
-            'answers': batch_data['answers'],
-            'image_ids': batch_data['image_ids']
+            # Essential fields for Qwen2-VL forward pass
+            'input_ids': torch.stack(batch_input_ids),
+            'attention_mask': torch.stack(batch_attention_mask),
+            'labels': torch.stack(batch_labels),
         }
         
+        # Add visual inputs if present
+        if batch_pixel_values:
+            result['pixel_values'] = torch.stack(batch_pixel_values)
+        
+        if batch_image_grid_thw:
+            result['image_grid_thw'] = torch.stack(batch_image_grid_thw)
+        
         return result
+
     
     def _create_optimizer(self):
         """Create optimizer for GRIT parameters"""
