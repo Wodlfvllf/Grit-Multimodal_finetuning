@@ -20,9 +20,15 @@ from ..models import GRITModel, LinearWithGRIT
 class GRITTrainer:
     """Trainer for GRIT fine-tuning"""
     
-    def __init__(self, model: GRITModel, train_dataset: VQADataset,
-                 val_dataset: Optional[VQADataset], config: GRITConfig,
-                 classes_to_idx: Dict[str, int], idx_to_classes: Dict[int, str]):
+    def __init__(self, 
+                 model: GRITModel, 
+                 train_dataset: VQADataset,
+                 val_dataset: Optional[VQADataset], 
+                 config: GRITConfig,
+                 classes_to_idx: Dict[str, int], 
+                 idx_to_classes: Dict[int, str]
+                 ):
+        
         self.model = model
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
@@ -33,16 +39,22 @@ class GRITTrainer:
         
         # Create data loaders
         self.train_loader = DataLoader(
-            train_dataset, batch_size=config.batch_size,
-            shuffle=True, num_workers=config.num_workers,
-            pin_memory=True, collate_fn=self.collate_fn
+            train_dataset, 
+            batch_size=config.batch_size,
+            shuffle=True, 
+            num_workers=config.num_workers,
+            pin_memory=True, 
+            collate_fn=self.collate_fn
         )
         
         if val_dataset:
             self.val_loader = DataLoader(
-                val_dataset, batch_size=config.batch_size,
-                shuffle=False, num_workers=config.num_workers,
-                pin_memory=True, collate_fn=self.collate_fn
+                val_dataset, 
+                batch_size=config.batch_size,
+                shuffle=False,
+                num_workers=config.num_workers,
+                pin_memory=True, 
+                collate_fn=self.collate_fn
             )
         
         # Classification head for VQA

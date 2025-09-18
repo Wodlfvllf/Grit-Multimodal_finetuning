@@ -12,6 +12,12 @@ from PIL import Image
 from ..config import GRITConfig
 from datasets import load_from_disk
 
+system_message = """You are a Vision Language Model specialized in interpreting visual data from chart images.
+                    Your task is to analyze the provided chart image and respond to queries with concise answers, 
+                    usually a single word, number, or short phrase.The charts include a variety of types (e.g., 
+                    line charts, bar charts) and contain colors, labels, and text.Focus on delivering accurate, 
+                    succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
+
 def format_data(sample):
     return {
       "images": [sample["image"]],
@@ -53,39 +59,46 @@ def format_data(sample):
     
     
 class VQADataset(Dataset):
-    """VQA Dataset class"""
+    """VQA Dataset class for Qwen2-VL fine-tuning"""
     
-    def __init__(self, vqa_data: List[Dict], classes_to_idx: Dict[str, int],
-                 processor: AutoProcessor, image_root_path: str, config: GRITConfig):
-        self.vqa_data = load_from_disk("/root/GritProject/data/ChartQA")['train']
-        self.dataset = [format_data(sample) for sample in self.vqa_data]
+    def __init__(self, 
+                 processor: AutoProcessor, 
+                 config: GRITConfig,
+                 split: str = 'train'):
+        
+        self.vqa_data = load_from_disk("/root/GritProject/data/ChartQA")[split]
         self.processor = processor
         self.config = config
-        self.system_message = """You are a Vision Language Model specialized in interpreting visual data from chart images.
-                                Your task is to analyze the provided chart image and respond to queries with concise answers, 
-                                usually a single word, number, or short phrase.The charts include a variety of types (e.g., 
-                                line charts, bar charts) and contain colors, labels, and text.Focus on delivering accurate, 
-                                succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
-    
+        
     def __len__(self):
         return len(self.vqa_data)
     
     def __getitem__(self, idx):
-        item = self.dataset[idx]
-        text_input = self.processor.apply_chat_template(item['messages'], tokenize=False)
-        image_input = self.processor(images=item['images'], return_tensors="pt")
-
-        return {
-            'input_ids': text_input['input_ids'].squeeze(),
-            'attention_mask': text_input['attention_mask'].squeeze(),
-            'pixel_values': image_input['pixel_values'].squeeze() if 'pixel_values' in image_input else None,
-            'image_grid_thw': image_input.get('image_grid_thw', torch.tensor([1, 30, 40])),
-            'labels': text_input['input_ids'].squeeze(),
-            'answer_label': torch.tensor(item['answer_label'], dtype=torch.long),
-            'question': item['question'],
-            'answer': item['answer'],
-            'image_id': item['image_id']
-        }
+        sample = self.vqa_data[idx]
+        formatted_sample = format_data(sample)
         
-# if __name__ == "__main__":
-    
+        # Process the conversation using the processor
+        text = self.processor.apply_chat_template(
+            formatted_sample["messages"], 
+            tokenize=False, 
+            add_generation_prompt=False
+        )
+        
+        # Process images and text together
+        inputs = self.processor(
+            text=[text],
+            images=formatted_sample["images"],
+            padding=True,
+            return_tensors="pt"
+        )
+        
+        # Extract the processed data
+        processed_item = {
+            'input_ids': inputs['input_ids'].squeeze(0),
+            'attention_mask': inputs['attention_mask'].squeeze(0),
+            'pixel_values': inputs['pixel_values'].squeeze(0) if 'pixel_values' in inputs else None,
+            'image_grid_thw': inputs['image_grid_thw'].squeeze(0) if 'image_grid_thw' in inputs else None,
+            'labels': inputs['input_ids'].squeeze(0).clone(),  # For causal LM, labels = input_ids
+        }
+
+        return processed_item
