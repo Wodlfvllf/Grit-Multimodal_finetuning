@@ -2,7 +2,12 @@
 # ============================================================================
 # VQA Dataset
 # ============================================================================
-
+from typing import List, Dict
+import os
+import torch
+from torch.utils.data import Dataset
+from transformers import AutoProcessor
+from ..config import GRITConfig
 class VQADataset(Dataset):
     """VQA Dataset class"""
     

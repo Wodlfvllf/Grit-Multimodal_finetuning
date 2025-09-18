@@ -1,5 +1,5 @@
 
-fromm .traineer import GRITTrainer
+from .trainer import GRITTrainer
 
 __all__ = [
     "GRITTrainer",

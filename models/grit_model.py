@@ -1,5 +1,11 @@
 
-
+from typing import List, Dict
+import torch
+import torch.nn as nn
+from .grit_layer import LinearWithGRIT
+from .replace_grit_modules import replace_linear_with_grit
+import logging
+from ..config import GRITConfig
 class GRITModel(nn.Module):
     """Main GRIT model wrapper"""
     

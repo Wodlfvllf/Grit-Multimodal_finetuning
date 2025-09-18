@@ -2,7 +2,11 @@
 # ============================================================================
 # GRIT Model Wrapper
 # ============================================================================
-
+import logging
+logger = logging.getLogger(__name__)
+import torch
+import torch.nn as nn
+from .grit_layer import LinearWithGRIT
 def replace_linear_with_grit(root: nn.Module, qualified_name: str, cfg) -> LinearWithGRIT:
     """Replace a linear module with GRIT wrapper"""
     parts = qualified_name.split(".")

@@ -1,9 +1,8 @@
 
-from .config import GRITConfig
+from ..config import GRITConfig
 from typing import List, Dict
 from .util import *
-from .models import GRITModel, replace_linear_with_grit, LinearWithGRIT
-from .data import VQADataset
+
 def damp_and_invert(mat: torch.Tensor, damping: float) -> torch.Tensor:
     """Add damping to diagonal and invert matrix"""
     mat = mat + torch.eye(mat.shape[0], device=mat.device, dtype=mat.dtype) * damping

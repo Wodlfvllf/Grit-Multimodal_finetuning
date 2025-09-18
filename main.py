@@ -4,10 +4,12 @@
 # ============================================================================
 from .utils import KFACStatistics, damp_and_invert
 from .data import VQADataset
-from .models import GRITModel, GRITConfig
+from .models import GRITModel, replace_linear_with_grit, LinearWithGRIT
+from .config import GRITConfig
 from .training import GRITTrainer
 from transformers import AutoProcessor
-from qwen_vl import Qwen2VLForConditionalGeneration
+from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+from qwen_vl_utils import process_vision_info
 import torch
 import os
 import pandas as pd
@@ -19,7 +21,7 @@ def main():
     """Main training function"""
     
     # Dataset paths
-    DATASET_ROOT = '/kaggle/input/visual-question-answering-computer-vision-nlp/dataset'
+    DATASET_ROOT = '../data/dataset/'
     ANSWER_SPACE_PATH = f'{DATASET_ROOT}/answer_space.txt'
     csv_path = f'{DATASET_ROOT}/data.csv'
     image_root = f'{DATASET_ROOT}/images'

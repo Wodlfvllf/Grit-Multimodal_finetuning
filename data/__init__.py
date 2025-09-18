@@ -1,5 +1,5 @@
 
-from .data import VQADataset
+from .dataset import VQADataset
 
 __all__ = [
     "VQADataset",
