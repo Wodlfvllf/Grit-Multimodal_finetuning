@@ -119,11 +119,6 @@ class GRITTrainer:
             
             if item['image_grid_thw'] is not None:
                 batch_image_grid_thw.append(item['image_grid_thw'])
-            
-            # Optional fields
-            batch_questions.append(item['question'])
-            batch_answers.append(item['answer'])
-            batch_image_ids.append(item['image_id'])
         
         # Create final batch dictionary
         result = {
@@ -167,6 +162,7 @@ class GRITTrainer:
     def compute_grit_loss(self, outputs, batch):
         """Compute GRIT-specific loss with regularization"""
         # Language modeling loss
+        # print(outputs)
         lm_loss = outputs.loss
 
         curvature_reg = 0.0
@@ -207,9 +203,7 @@ class GRITTrainer:
     
     def train_epoch(self, epoch):
         """Train for one epoch"""
-        self.model.train()
-        self.classification_head.train()
-        
+        self.model.train()        
         epoch_loss = 0.0
         # epoch_accuracy = 0.0
         num_batches = 0
@@ -217,14 +211,14 @@ class GRITTrainer:
         progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.config.num_epochs}")
         
         for batch_idx, batch in enumerate(progress_bar):
-            logger.info(f"Epoch {epoch+1} - Entered training loop, batch {batch_idx+1}/{len(self.train_loader)}")
+            # logger.info(f"Epoch {epoch+1} - Entered training loop, batch {batch_idx+1}/{len(self.train_loader)}")
             # Move to device
             batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v
                     for k, v in batch.items()}
-            logger.info(f"Batch keys: {list(batch.keys())}")
-            logger.info(f"Input IDs shape: {batch['input_ids'].shape}")
-            logger.info(f"Pixel values shape: {batch['pixel_values'].shape}")
-            logger.info(f"Image grid thw shape: {batch['image_grid_thw'].shape}")
+            # logger.info(f"Batch keys: {list(batch.keys())}")
+            # logger.info(f"Input IDs shape: {batch['input_ids'].shape}")
+            # logger.info(f"Pixel values shape: {batch['pixel_values'].shape}")
+            # logger.info(f"Image grid thw shape: {batch['image_grid_thw'].shape}")
             # print(batch['image_grid_thw'].shape)
             # Forward pass
             if self.config.mixed_precision:
@@ -250,19 +244,21 @@ class GRITTrainer:
                     # Gradient clipping
                     self.scaler.unscale_(self.optimizer)
                     all_params = [p for w in self.model.grit_wrappers for p in [w.lora_A, w.lora_B]]
-                    all_params.extend(list(self.classification_head.parameters()))
+                    # all_params.extend(list(self.classification_head.parameters()))
                     torch.nn.utils.clip_grad_norm_(all_params, self.config.max_grad_norm)
                     
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                     self.optimizer.zero_grad()
             else:
-                logger.info(f"Epoch {epoch+1} - Using standard precision, batch {batch_idx+1}/{len(self.train_loader)}")
+                # logger.info(f"Epoch {epoch+1} - Using standard precision, batch {batch_idx+1}/{len(self.train_loader)}")
                 outputs = self.model(
                     input_ids=batch['input_ids'],
                     attention_mask=batch['attention_mask'],
                     pixel_values=batch.get('pixel_values'),
-                    image_grid_thw = batch['image_grid_thw']
+                    image_grid_thw = batch['image_grid_thw'],
+                    labels=batch['labels']   # <-- add this!
+
                 )
                 loss_dict = self.compute_grit_loss(outputs, batch)
                 loss = loss_dict['total_loss'] / self.config.gradient_accumulation_steps
@@ -275,7 +271,7 @@ class GRITTrainer:
                     
                     # Gradient clipping
                     all_params = [p for w in self.model.grit_wrappers for p in [w.lora_A, w.lora_B]]
-                    all_params.extend(list(self.classification_head.parameters()))
+                    # all_params.extend(list(self.classification_head.parameters()))
                     torch.nn.utils.clip_grad_norm_(all_params, self.config.max_grad_norm)
                     
                     self.optimizer.step()
@@ -369,7 +365,7 @@ class GRITTrainer:
         checkpoint = {
             'epoch': len(self.train_losses),
             'model_adapters': self.model.save_adapters(),
-            'classification_head': self.classification_head.state_dict(),
+            # 'classification_head': self.classification_head.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'scheduler': self.scheduler.state_dict(),
             'train_losses': self.train_losses,

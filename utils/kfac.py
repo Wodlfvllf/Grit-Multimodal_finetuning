@@ -35,12 +35,18 @@ class KFACStatistics:
         
     def update(self, inputs: torch.Tensor, grad_out: torch.Tensor):
         """Update K-FAC statistics with new batch"""
-        b = inputs.shape[0]
-        
+        b = inputs.shape[-1]
+
+        # logger.info(f"KFAC update - inputs shape: {inputs.shape}, grad_out shape: {grad_out.shape}, "
+            # f"inputs mem: {inputs.numel() * 4 / 1e9:.2f} GB")
+
         # Convert to correct dtype and reshape
-        X = inputs.reshape(b, -1).to(self.dtype)
-        G = grad_out.reshape(b, -1).to(self.dtype)
+        X = inputs.reshape(-1, b).to(self.dtype)
+        G = grad_out.reshape(-1, self.output_dim).to(self.dtype)
         
+        # logger.info(f"KFAC update - X shape: {X.shape}, G shape: {G.shape}, "
+        #     f"X mem: {X.numel() * 4 / 1e9:.2f} GB")
+
         # Compute batch covariances
         A_batch = (X.T @ X) / max(1, b)
         G_batch = (G.T @ G) / max(1, b)

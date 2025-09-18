@@ -11,6 +11,8 @@ from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 from ..config import GRITConfig
 from datasets import load_from_disk
+from torchvision import transforms
+
 
 system_message = """You are a Vision Language Model specialized in interpreting visual data from chart images.
                     Your task is to analyze the provided chart image and respond to queries with concise answers, 
@@ -69,6 +71,11 @@ class VQADataset(Dataset):
         self.vqa_data = load_from_disk("/root/GritProject/data/ChartQA")[split]
         self.processor = processor
         self.config = config
+        self.pil_transform = transforms.Compose([
+            transforms.Resize(32),  
+            transforms.CenterCrop(32),
+            transforms.ToTensor(), 
+        ])
         
     def __len__(self):
         return len(self.vqa_data)
@@ -76,6 +83,14 @@ class VQADataset(Dataset):
     def __getitem__(self, idx):
         sample = self.vqa_data[idx]
         formatted_sample = format_data(sample)
+        
+        # apply PIL resizing / center crop BEFORE processor
+        pil_img = formatted_sample["images"][0]
+        if isinstance(pil_img, str):
+            pil_img = Image.open(pil_img).convert("RGB")
+        else:
+            pil_img = pil_img.convert("RGB")
+        resized_img_tensor = self.pil_transform(pil_img)  # [C,H,W]
         
         # Process the conversation using the processor
         text = self.processor.apply_chat_template(
@@ -87,7 +102,7 @@ class VQADataset(Dataset):
         # Process images and text together
         inputs = self.processor(
             text=[text],
-            images=formatted_sample["images"],
+            images=[ transforms.ToPILImage()(resized_img_tensor) ],
             padding=True,
             return_tensors="pt"
         )

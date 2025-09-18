@@ -53,7 +53,7 @@ class GRITConfig:
     
     # System parameters
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    mixed_precision: bool = True
+    mixed_precision: bool = False
     num_workers: int = 4
     
     # Regularization parameters
@@ -62,4 +62,6 @@ class GRITConfig:
     
     def __post_init__(self):
         if self.target_modules is None:
-            self.target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+            # self.target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+            self.target_modules = ["q_proj", "k_proj"]
+            
