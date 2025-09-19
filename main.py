@@ -5,8 +5,8 @@
 from .utils import KFACStatistics, damp_and_invert
 from .data import VQADataset
 from .models import GRITModel, replace_linear_with_grit, LinearWithGRIT
-from .config import GRITConfig
-from .training import GRITTrainer
+from .config import GRITConfig, LoRAConfig
+from .training import GRITTrainer, LoRATrainer
 from transformers import AutoProcessor
 from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer, AutoProcessor
 from qwen_vl_utils import process_vision_info
