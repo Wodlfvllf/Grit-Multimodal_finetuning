@@ -190,3 +190,33 @@ class LoRATrainer:
         
         logger.info(f"Epoch {epoch+1} - Train Loss: {avg_loss:.4f}")
         return avg_loss
+    
+    def validate(self, epoch):
+        """Validation loop for LoRA"""
+        if not self.val_dataset:
+            return None
+        
+        self.model.eval()
+        total_loss = 0
+        
+        with torch.no_grad():
+            for batch in tqdm(self.val_loader, desc=f"Validation"):
+                batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v
+                        for k, v in batch.items()}
+                
+                outputs = self.model(
+                    input_ids=batch['input_ids'],
+                    attention_mask=batch['attention_mask'],
+                    pixel_values=batch.get('pixel_values'),
+                    image_grid_thw=batch.get('image_grid_thw'),
+                    labels=batch['labels']
+                )
+                
+                total_loss += outputs.loss.item()
+        
+        avg_loss = total_loss / len(self.val_loader)
+        self.val_losses.append(avg_loss)
+        logger.info(f"Epoch {epoch+1} - Val Loss: {avg_loss:.4f}")
+        
+        self.model.train()
+        return avg_loss
