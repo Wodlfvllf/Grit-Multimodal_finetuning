@@ -220,3 +220,41 @@ class LoRATrainer:
         
         self.model.train()
         return avg_loss
+    
+    def train(self):
+        """Main training loop for LoRA"""
+        logger.info("Starting LoRA training...")
+        
+        for epoch in range(self.config.num_epochs):
+            # Train
+            train_loss = self.train_epoch(epoch)
+            
+            # Validate
+            val_loss = self.validate(epoch)
+            
+            # Regular checkpoint
+            if (epoch + 1) % 5 == 0:
+                self.save_checkpoint(f"lora_checkpoint_epoch_{epoch+1}.pt")
+        
+        logger.info("LoRA training completed!")
+        return {
+            'train_losses': self.train_losses,
+            'val_losses': self.val_losses,
+        }
+    
+    def save_checkpoint(self, filename: str):
+        """Save checkpoint for LoRA model"""
+        checkpoint = {
+            'epoch': len(self.train_losses),
+            'model_state_dict': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'scheduler': self.scheduler.state_dict(),
+            'train_losses': self.train_losses,
+            'val_losses': self.val_losses,
+            'config': self.config
+        }
+        
+        save_path = Path("checkpoints") / filename
+        save_path.parent.mkdir(exist_ok=True)
+        torch.save(checkpoint, save_path)
+        logger.info(f"Checkpoint saved to {save_path}")
