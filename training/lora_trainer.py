@@ -111,3 +111,21 @@ class LoRATrainer:
             result['image_grid_thw'] = torch.stack(batch_image_grid_thw)
         
         return result
+    
+    def _create_optimizer(self):
+        """Create optimizer for LoRA parameters only"""
+        # Get only trainable parameters (LoRA adapters)
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+        
+        return torch.optim.AdamW(
+            trainable_params,
+            lr=self.config.learning_rate,
+            weight_decay=0.01
+        )
+    
+    def _create_scheduler(self):
+        """Create learning rate scheduler"""
+        total_steps = len(self.train_loader) * self.config.num_epochs
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=total_steps, eta_min=1e-6
+        )
