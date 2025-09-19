@@ -22,10 +22,10 @@ import warnings
 class GRITConfig:
     """Configuration for GRIT fine-tuning"""
     # Model configuration
-    model_name: str = "Qwen/Qwen2-VL-2B-Instruct"
+    model_name: str = "Qwen/Qwen2-VL-7B-Instruct"
     
     # GRIT specific parameters
-    rank: int = 8  # Low-rank dimension
+    rank: int = 32  # Low-rank dimension
     alpha: float = 16.0  # LoRA scaling factor
     dropout: float = 0.1
     target_modules: List[str] = None  # Will be set based on model architecture
@@ -41,7 +41,7 @@ class GRITConfig:
     
     # Training parameters
     learning_rate: float = 5e-5
-    batch_size: int = 4
+    batch_size: int = 16
     gradient_accumulation_steps: int = 4
     num_epochs: int = 3
     warmup_steps: int = 100
@@ -62,6 +62,6 @@ class GRITConfig:
     
     def __post_init__(self):
         if self.target_modules is None:
-            # self.target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
-            self.target_modules = ["q_proj", "k_proj"]
+            self.target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+            # self.target_modules = ["q_proj", "k_proj"]
             

@@ -162,7 +162,6 @@ class GRITTrainer:
     def compute_grit_loss(self, outputs, batch):
         """Compute GRIT-specific loss with regularization"""
         # Language modeling loss
-        # print(outputs)
         lm_loss = outputs.loss
 
         curvature_reg = 0.0
@@ -182,7 +181,7 @@ class GRITTrainer:
         reprojection_reg = self.config.lambda_reprojection * reprojection_reg / len(self.model.grit_wrappers)
         
         # Total loss
-        total_loss = 0.7 * lm_loss + curvature_reg + reprojection_reg
+        total_loss = 0.7 * lm_loss + 0.15 * curvature_reg + 0.15 * reprojection_reg
         
         return {
             'total_loss': total_loss,
@@ -202,105 +201,68 @@ class GRITTrainer:
         return correct.mean().item()
     
     def train_epoch(self, epoch):
-        """Train for one epoch"""
-        self.model.train()        
+        self.model.train()
         epoch_loss = 0.0
-        # epoch_accuracy = 0.0
-        num_batches = 0
+        num_update_steps = 0  # Count gradient update steps, not mini-batches
         
-        progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.config.num_epochs}")
+        progress_bar = tqdm(enumerate(self.train_loader), total=len(self.train_loader))
         
-        for batch_idx, batch in enumerate(progress_bar):
-            # logger.info(f"Epoch {epoch+1} - Entered training loop, batch {batch_idx+1}/{len(self.train_loader)}")
-            # Move to device
+        for batch_idx, batch in progress_bar:
+            # Forward pass
             batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v
                     for k, v in batch.items()}
-            # logger.info(f"Batch keys: {list(batch.keys())}")
-            # logger.info(f"Input IDs shape: {batch['input_ids'].shape}")
-            # logger.info(f"Pixel values shape: {batch['pixel_values'].shape}")
-            # logger.info(f"Image grid thw shape: {batch['image_grid_thw'].shape}")
-            # print(batch['image_grid_thw'].shape)
-            # Forward pass
-            if self.config.mixed_precision:
-                logger.info(f"Epoch {epoch+1} - Using mixed precision, batch {batch_idx+1}/{len(self.train_loader)}")
-                with autocast():
-                    outputs = self.model(
-                        input_ids=batch['input_ids'],
-                        attention_mask=batch['attention_mask'],
-                        pixel_values=batch.get('pixel_values'),
-                        image_grid_thw = batch['image_grid_thw']
-                        
-                    )
-                    logger.info(f"Model outputs obtained")
-                    loss_dict = self.compute_grit_loss(outputs, batch)
-                    loss = loss_dict['total_loss'] / self.config.gradient_accumulation_steps
-                
-                self.scaler.scale(loss).backward()
-                
-                if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
-                    # Update GRIT gradients with K-FAC
-                    self.model.update_grit_gradients()
-                    
-                    # Gradient clipping
-                    self.scaler.unscale_(self.optimizer)
-                    all_params = [p for w in self.model.grit_wrappers for p in [w.lora_A, w.lora_B]]
-                    # all_params.extend(list(self.classification_head.parameters()))
-                    torch.nn.utils.clip_grad_norm_(all_params, self.config.max_grad_norm)
-                    
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-                    self.optimizer.zero_grad()
-            else:
-                # logger.info(f"Epoch {epoch+1} - Using standard precision, batch {batch_idx+1}/{len(self.train_loader)}")
-                outputs = self.model(
-                    input_ids=batch['input_ids'],
-                    attention_mask=batch['attention_mask'],
-                    pixel_values=batch.get('pixel_values'),
-                    image_grid_thw = batch['image_grid_thw'],
-                    labels=batch['labels']   # <-- add this!
-
-                )
-                loss_dict = self.compute_grit_loss(outputs, batch)
-                loss = loss_dict['total_loss'] / self.config.gradient_accumulation_steps
-                
-                loss.backward()
-                
-                if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
-                    with open("/root/GritProject/log.txt", "a") as f:
-                        f.write(f"Epoch {epoch+1}, Batch {batch_idx+1}, Loss: {loss.item()}\n")
-                        f.flush()
-                    # Update GRIT gradients with K-FAC
-                    self.model.update_grit_gradients()
-                    
-                    # Gradient clipping
-                    all_params = [p for w in self.model.grit_wrappers for p in [w.lora_A, w.lora_B]]
-                    # all_params.extend(list(self.classification_head.parameters()))
-                    torch.nn.utils.clip_grad_norm_(all_params, self.config.max_grad_norm)
-                    
-                    self.optimizer.step()
-                    self.optimizer.zero_grad()
+            outputs = self.model(
+                input_ids=batch['input_ids'],
+                attention_mask=batch['attention_mask'],
+                pixel_values=batch.get('pixel_values'),
+                image_grid_thw=batch['image_grid_thw'],
+                labels=batch['labels']
+            )
             
-            # Update metrics
-            # accuracy = self.compute_accuracy(loss_dict['classification_logits'], batch['answer_labels'])
-            epoch_loss += loss.item() * self.config.gradient_accumulation_steps
-            # epoch_accuracy += accuracy
-            num_batches += 1
+            # Compute loss and scale it down for accumulation
+            loss_dict = self.compute_grit_loss(outputs, batch)
+            loss = loss_dict['total_loss'] / self.config.gradient_accumulation_steps
             
-            # Update progress bar
+            # Backward pass (gradients accumulate automatically)
+            loss.backward()
+            
+            # Only update weights every N steps
+            if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
+                # Apply GRIT preconditioning
+                self.model.update_grit_gradients()
+                
+                # Gradient clipping
+                all_params = [p for w in self.model.grit_wrappers for p in [w.lora_A, w.lora_B]]
+                torch.nn.utils.clip_grad_norm_(all_params, self.config.max_grad_norm)
+                
+                # Optimizer step
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                
+                # Update metrics (only after complete accumulation cycle)
+                # Note: loss.item() is the scaled loss, so we multiply back to get true loss
+                actual_loss = loss.item() * self.config.gradient_accumulation_steps
+                epoch_loss += actual_loss
+                num_update_steps += 1
+                
+                # Log the true loss (not scaled)
+                with open("/root/GritProject/log.txt", "a") as f:
+                    f.write(f"Epoch {epoch+1}, Update Step {num_update_steps}, Loss: {actual_loss}\n")
+                    f.flush()
+                
+                # Scheduler step (should be per update, not per mini-batch)
+                self.scheduler.step()
+            
+            # Progress bar shows the true loss (unscaled)
+            true_loss = loss.item() * self.config.gradient_accumulation_steps
             progress_bar.set_postfix({
-                'loss': f"{loss.item() * self.config.gradient_accumulation_steps:.4f}",
-                # 'acc': f"{accuracy:.4f}",
+                'loss': f"{true_loss:.4f}",
                 'lm_loss': f"{loss_dict['lm_loss'].item():.4f}",
-                # 'cls_loss': f"{loss_dict['cls_loss'].item():.4f}"
             })
-            
-            self.scheduler.step()
         
-        avg_loss = epoch_loss / num_batches
-        # avg_accuracy = epoch_accuracy / num_batches
-        
+        # Average loss over update steps, not mini-batches
+        avg_loss = epoch_loss / max(num_update_steps, 1)
         self.train_losses.append(avg_loss)
-        # self.train_accuracies.append(avg_accuracy)
         
         logger.info(f"Epoch {epoch+1} - Train Loss: {avg_loss:.4f}")
         return avg_loss
@@ -368,7 +330,6 @@ class GRITTrainer:
         checkpoint = {
             'epoch': len(self.train_losses),
             'model_adapters': self.model.save_adapters(),
-            # 'classification_head': self.classification_head.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'scheduler': self.scheduler.state_dict(),
             'train_losses': self.train_losses,

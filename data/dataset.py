@@ -72,8 +72,8 @@ class VQADataset(Dataset):
         self.processor = processor
         self.config = config
         self.pil_transform = transforms.Compose([
-            transforms.Resize(32),  
-            transforms.CenterCrop(32),
+            transforms.Resize(128),  
+            transforms.CenterCrop(128),
             transforms.ToTensor(), 
         ])
         
