@@ -266,6 +266,9 @@ class GRITTrainer:
                 loss.backward()
                 
                 if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
+                    with open("/root/GritProject/log.txt", "a") as f:
+                        f.write(f"Epoch {epoch+1}, Batch {batch_idx+1}, Loss: {loss.item()}\n")
+                        f.flush()
                     # Update GRIT gradients with K-FAC
                     self.model.update_grit_gradients()
                     
@@ -332,34 +335,70 @@ class GRITTrainer:
         self.model.train()
         return avg_loss
     
+    # def train(self):
+    #     """Main training loop"""
+    #     logger.info("Starting GRIT training...")
+    #     best_val_acc = 0.0
+        
+    #     for epoch in range(self.config.num_epochs):
+    #         # Train
+    #         train_loss = self.train_epoch(epoch)
+
+    #         # Validate
+    #         val_loss = self.validate(epoch)
+    #         val_acc = None  # Placeholder if accuracy is not computed
+    #         # Save best model
+    #         if val_acc is not None and val_acc > best_val_acc:
+    #             best_val_acc = val_acc
+    #             self.save_checkpoint(f"best_grit_model.pt")
+    #             logger.info(f"Saved best model with val acc: {val_acc:.4f}")
+            
+    #         # Regular checkpoint
+    #         if (epoch + 1) % 5 == 0:
+    #             self.save_checkpoint(f"grit_checkpoint_epoch_{epoch+1}.pt")
+        
+    #     logger.info("GRIT training completed!")
+    #     return {
+    #         'train_losses': self.train_losses,
+    #         'val_losses': self.val_losses,
+    #     }
     def train(self):
         """Main training loop"""
         logger.info("Starting GRIT training...")
         best_val_acc = 0.0
-        
-        for epoch in range(self.config.num_epochs):
-            # Train
-            train_loss = self.train_epoch(epoch)
 
-            # Validate
-            val_loss = self.validate(epoch)
-            val_acc = None  # Placeholder if accuracy is not computed
-            # Save best model
-            if val_acc is not None and val_acc > best_val_acc:
-                best_val_acc = val_acc
-                self.save_checkpoint(f"best_grit_model.pt")
-                logger.info(f"Saved best model with val acc: {val_acc:.4f}")
-            
-            # Regular checkpoint
-            if (epoch + 1) % 5 == 0:
-                self.save_checkpoint(f"grit_checkpoint_epoch_{epoch+1}.pt")
-        
+        # open log file in append mode
+        log_path = "log.txt"
+        with open(log_path, "a") as f:
+            for epoch in range(self.config.num_epochs):
+                # Train
+                train_loss = self.train_epoch(epoch)
+
+                # Validate
+                val_loss = self.validate(epoch)
+                val_acc = None  # Placeholder if accuracy is not computed
+
+                # Save losses to log.txt
+                f.write(f"Epoch {epoch+1}/{self.config.num_epochs} "
+                        f"- Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}\n")
+                f.flush()  # ensure it's written immediately
+
+                # Save best model
+                if val_acc is not None and val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    self.save_checkpoint(f"best_grit_model.pt")
+                    logger.info(f"Saved best model with val acc: {val_acc:.4f}")
+
+                # Regular checkpoint
+                if (epoch + 1) % 5 == 0:
+                    self.save_checkpoint(f"grit_checkpoint_epoch_{epoch+1}.pt")
+
         logger.info("GRIT training completed!")
         return {
             'train_losses': self.train_losses,
             'val_losses': self.val_losses,
         }
-        
+
     def save_checkpoint(self, filename: str):
         """Save checkpoint"""
         checkpoint = {
