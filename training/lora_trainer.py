@@ -129,3 +129,64 @@ class LoRATrainer:
         return torch.optim.lr_scheduler.CosineAnnealingLR(
             self.optimizer, T_max=total_steps, eta_min=1e-6
         )
+        
+    def train_epoch(self, epoch):
+        """Training epoch for standard LoRA"""
+        self.model.train()
+        epoch_loss = 0.0
+        num_update_steps = 0
+        
+        progress_bar = tqdm(enumerate(self.train_loader), total=len(self.train_loader))
+        
+        for batch_idx, batch in progress_bar:
+            # Forward pass
+            batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v
+                    for k, v in batch.items()}
+            
+            outputs = self.model(
+                input_ids=batch['input_ids'],
+                attention_mask=batch['attention_mask'],
+                pixel_values=batch.get('pixel_values'),
+                image_grid_thw=batch.get('image_grid_thw'),
+                labels=batch['labels']
+            )
+            
+            # Simple cross-entropy loss (no GRIT regularization)
+            loss = outputs.loss / self.config.gradient_accumulation_steps
+            
+            # Backward pass
+            loss.backward()
+            
+            # Update weights every N steps
+            if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
+                # Gradient clipping
+                trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+                torch.nn.utils.clip_grad_norm_(trainable_params, self.config.max_grad_norm)
+                
+                # Optimizer step
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                
+                # Update metrics
+                actual_loss = loss.item() * self.config.gradient_accumulation_steps
+                epoch_loss += actual_loss
+                num_update_steps += 1
+                
+                # Log
+                with open("/root/GritProject/lora_log.txt", "a") as f:
+                    f.write(f"Epoch {epoch+1}, Update Step {num_update_steps}, Loss: {actual_loss}\n")
+                    f.flush()
+                
+                # Scheduler step
+                self.scheduler.step()
+            
+            # Progress bar
+            true_loss = loss.item() * self.config.gradient_accumulation_steps
+            progress_bar.set_postfix({'loss': f"{true_loss:.4f}"})
+        
+        # Average loss
+        avg_loss = epoch_loss / max(num_update_steps, 1)
+        self.train_losses.append(avg_loss)
+        
+        logger.info(f"Epoch {epoch+1} - Train Loss: {avg_loss:.4f}")
+        return avg_loss
