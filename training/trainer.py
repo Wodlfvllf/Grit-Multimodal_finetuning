@@ -17,12 +17,13 @@ logger = logging.getLogger(__name__)
 from ..config import GRITConfig
 from ..data import VQADataset
 from ..models import GRITModel, LinearWithGRIT
+
 class GRITTrainer:
     """Trainer for GRIT fine-tuning"""
     
     def __init__(self, 
                  model: GRITModel, 
-                 processor,  # Store processor
+                 processor,
                  train_dataset: VQADataset,
                  val_dataset: Optional[VQADataset], 
                  config: GRITConfig
@@ -232,7 +233,8 @@ class GRITTrainer:
                 self.model.update_grit_gradients()
                 
                 # Gradient clipping
-                all_params = [p for w in self.model.grit_wrappers for p in [w.lora_A, w.lora_B]]
+                # all_params = [p for w in self.model.grit_wrappers for p in [w.lora_A, w.lora_B]]
+                all_params = [p for p in self.model.parameters() if p.requires_grad]
                 torch.nn.utils.clip_grad_norm_(all_params, self.config.max_grad_norm)
                 
                 # Optimizer step

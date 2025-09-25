@@ -22,19 +22,10 @@ def create_peft_config(config: LoRAConfig):
     peft_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,  # or TaskType.FEATURE_EXTRACTION for vision tasks
         inference_mode=False,
-        r=config.lora_r,  # rank
-        lora_alpha=config.lora_alpha,  # scaling parameter
-        lora_dropout=config.lora_dropout,
-        target_modules=[
-            # Common target modules for Qwen2VL - adjust based on your model architecture
-            "q_proj",
-            "k_proj", 
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ],
+        r=config.rank,  # rank
+        lora_alpha=config.alpha,  # scaling parameter
+        lora_dropout=config.dropout,
+        target_modules=config.target_modules,
         # Optional: specify modules to save (useful for vision-language models)
         modules_to_save=["embed_tokens", "lm_head"],  # commonly saved modules
     )
@@ -51,7 +42,7 @@ def main():
     logger.info("Loading base model...")
     base_model = Qwen2VLForConditionalGeneration.from_pretrained(
         config.model_name,
-        torch_dtype=torch.float16 if config.mixed_precision else torch.float32,
+        torch_dtype=torch.float32,
         device_map=config.device,
 
     )

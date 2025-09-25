@@ -150,7 +150,7 @@ class LoRATrainer:
         num_update_steps = 0
         
         progress_bar = tqdm(enumerate(self.train_loader), total=len(self.train_loader))
-        
+        logger.info('Entered Training Loop')
         for batch_idx, batch in progress_bar:
             # Forward pass
             batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v

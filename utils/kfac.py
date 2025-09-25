@@ -34,25 +34,54 @@ class KFACStatistics:
         self.G_eigvecs = None
         
     def update(self, inputs: torch.Tensor, grad_out: torch.Tensor):
-        """Update K-FAC statistics with new batch"""
-        b = inputs.shape[-1]
+        """
+        Update K-FAC statistics with new batch.
+        Example shapes are for a transformer layer with:
+        - batch_size = 4
+        - sequence_length = 140
+        - input_dim = 1536
+        - output_dim = 256
+        """
+        # === Step 1: Get Feature Dimensions ===
+        # Get the feature dimension from each tensor individually. This is crucial for
+        # layers where input and output dimensions are different.
+        # input_dim will be 1536 for our example.
+        input_dim = inputs.shape[-1]
+        # output_dim will be 256 for our example.
+        output_dim = grad_out.shape[-1]
 
-        # logger.info(f"KFAC update - inputs shape: {inputs.shape}, grad_out shape: {grad_out.shape}, "
-            # f"inputs mem: {inputs.numel() * 4 / 1e9:.2f} GB")
+        # === Step 2: Reshape Tensors for Statistical Calculation ===
+        # Reshape the 3D input tensor into a 2D matrix.
+        # This treats each token in the sequence as an independent sample.
+        # Shape goes from [4, 140, 1536] to [4 * 140, 1536] -> [560, 1536].
+        X = inputs.reshape(-1, input_dim).to(self.dtype)
 
-        # Convert to correct dtype and reshape
-        X = inputs.reshape(-1, b).to(self.dtype)
-        G = grad_out.reshape(-1, self.output_dim).to(self.dtype)
-        
-        # logger.info(f"KFAC update - X shape: {X.shape}, G shape: {G.shape}, "
-        #     f"X mem: {X.numel() * 4 / 1e9:.2f} GB")
+        # Reshape the 3D output gradient tensor into a 2D matrix.
+        # Shape goes from [4, 140, 256] to [4 * 140, 256] -> [560, 256].
+        G = grad_out.reshape(-1, output_dim).to(self.dtype)
 
-        # Compute batch covariances
-        A_batch = (X.T @ X) / max(1, b)
-        G_batch = (G.T @ G) / max(1, b)
-        
-        # Update with momentum
+        # === Step 3: Compute Batch Covariance Matrices ===
+        # The number of samples for averaging is the first dimension of the reshaped matrix.
+        # effective_batch_size will be 560 in our example.
+        effective_batch_size = X.shape[0]
+
+        # Compute the input activation covariance matrix (A).
+        # X.T shape: [1536, 560]
+        # X shape:   [560, 1536]
+        # Resulting A_batch shape: [1536, 1536] ([input_dim, input_dim])
+        A_batch = (X.T @ X) / max(1, effective_batch_size)
+
+        # Compute the output gradient covariance matrix (G).
+        # G.T shape: [256, 560]
+        # G shape:   [560, 256]
+        # Resulting G_batch shape: [256, 256] ([output_dim, output_dim])
+        G_batch = (G.T @ G) / max(1, effective_batch_size)
+
+        # === Step 4: Update Running Averages with Momentum ===
+        # This is an element-wise operation, so the shapes of self.A and self.G do not change.
+        # self.A shape remains [1536, 1536].
         self.A = self.momentum * self.A + (1.0 - self.momentum) * A_batch
+        # self.G shape remains [256, 256].
         self.G = self.momentum * self.G + (1.0 - self.momentum) * G_batch
         
     def compute_eigendecomp(self):
