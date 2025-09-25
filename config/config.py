@@ -33,7 +33,7 @@ class GRITConfig:
     # K-FAC parameters
     kfac_update_freq: int = 10  # Update K-FAC statistics every N steps
     kfac_damping: float = 1e-3  # Damping factor for K-FAC
-    kfac_momentum: float = 0.95  # Momentum for K-FAC statistics
+    kfac_momentum: float = 0.5  # Momentum for K-FAC statistics
     
     # Neural reprojection parameters
     reprojection_rank: int = 4  # Number of top eigenvectors to use
