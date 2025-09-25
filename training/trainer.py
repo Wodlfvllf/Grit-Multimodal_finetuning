@@ -208,6 +208,17 @@ class GRITTrainer:
         
         progress_bar = tqdm(enumerate(self.train_loader), total=len(self.train_loader))
         
+        #----------------------------------DEBUG--------------------------------------------#
+        grit_wrappers = [m for m in self.model.modules() if isinstance(m, LinearWithGRIT)]
+        if not grit_wrappers:
+            raise ValueError("No LinearWithGRIT layers found to inspect.")
+        layer_to_inspect = grit_wrappers[0] 
+        
+        # Store norms for the current accumulation cycle
+        grad_norms_A = []
+        grad_norms_B = []
+        #----------------------------------DEBUG--------------------------------------------#
+        
         for batch_idx, batch in progress_bar:
             # Forward pass
             batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v
@@ -227,11 +238,36 @@ class GRITTrainer:
             # Backward pass (gradients accumulate automatically)
             loss.backward()
             
+            # === Gradient Inspection Step ===
+            # After backward(), but before the optimizer step.
+            # Check if the gradient exists before trying to access its norm
+            if layer_to_inspect.lora_A.grad is not None:
+                norm_A = layer_to_inspect.lora_A.grad.norm().item()
+                norm_B = layer_to_inspect.lora_B.grad.norm().item()
+                grad_norms_A.append(norm_A)
+                grad_norms_B.append(norm_B)
+            # ================================
+            
+            # === LOG THE ACCUMULATED NORMS BEFORE PRECONDITIONING ===
+            print(f"\n--- Update Step {num_update_steps + 1} (Batch {batch_idx + 1}) ---")
+            print(f"Norms of lora_A.grad over {len(grad_norms_A)} accumulation steps: {grad_norms_A}")
+            print(f"Norms of lora_B.grad over {len(grad_norms_B)} accumulation steps: {grad_norms_B}")
+            print(f"Final accumulated norm for A: {layer_to_inspect.lora_A.grad.norm().item():.4f}")
+            print(f"Final accumulated norm for B: {layer_to_inspect.lora_B.grad.norm().item():.4f}")
+            # =========================================================
+
+            
             # Only update weights every N steps
             if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
                 # Apply GRIT preconditioning
                 self.model.update_grit_gradients()
                 
+                # === LOG THE NORMS AFTER PRECONDITIONING ===
+                print(f"Norm of A.grad AFTER preconditioning: {layer_to_inspect.lora_A.grad.norm().item():.4f}")
+                print(f"Norm of B.grad AFTER preconditioning: {layer_to_inspect.lora_B.grad.norm().item():.4f}")
+                print("-------------------------------------------------")
+                # ===========================================
+            
                 # Gradient clipping
                 # all_params = [p for w in self.model.grit_wrappers for p in [w.lora_A, w.lora_B]]
                 all_params = [p for p in self.model.parameters() if p.requires_grad]
