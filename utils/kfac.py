@@ -130,7 +130,7 @@ class KFACStatistics:
         X = inputs.reshape(-1, input_dim).to(self.dtype)
         G = grad_out.reshape(-1, output_dim).to(self.dtype)
 
-        scaling_factor = 100.0
+        scaling_factor = 1.0
         G_scaled = G * scaling_factor
         
         # === Step 3: Compute Batch Covariance Matrices ===
@@ -141,11 +141,11 @@ class KFACStatistics:
         # === INTERNAL DEBUG PRINTS ===
         if debug:
             print(f"\n    --- KFAC Internal Trace ---")
-            print(f"    - Input `grad_out` norm: {grad_out.norm().item():.6f}")
-            print(f"    - Reshaped `G` norm:     {G.norm().item():.6f}")
-            print(f"    - Calculated `G_batch` norm: {G_batch.norm().item():.6f}")
+            print(f"    - Input `grad_out` norm: {grad_out.norm().item():.8f}")
+            print(f"    - Reshaped `G` norm:     {G.norm().item():.8f}")
+            print(f"    - Calculated `G_batch` norm: {G_batch.norm().item():.18f}")
             print(f"    - `self.momentum`:       {self.momentum}")
-            print(f"    - `self.G` norm BEFORE update: {self.G.norm().item():.6f}")
+            print(f"    - `self.G` norm BEFORE update: {self.G.norm().item():.8f}")
 
         # === Step 4: Update Running Averages with Momentum ===
         # This is the critical section we are investigating.
@@ -153,7 +153,7 @@ class KFACStatistics:
         self.G = self.momentum * self.G + (1.0 - self.momentum) * G_batch
         
         if debug:
-            print(f"    - `self.G` norm AFTER update:  {self.G.norm().item():.6f}")
+            print(f"    - `self.G` norm AFTER update:  {self.G.norm().item():.8f}")
             print(f"    ---------------------------\n")
 
     def compute_eigendecomp(self):

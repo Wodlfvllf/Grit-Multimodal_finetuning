@@ -252,8 +252,8 @@ class GRITTrainer:
             print(f"\n--- Update Step {num_update_steps + 1} (Batch {batch_idx + 1}) ---")
             print(f"Norms of lora_A.grad over {len(grad_norms_A)} accumulation steps: {grad_norms_A}")
             print(f"Norms of lora_B.grad over {len(grad_norms_B)} accumulation steps: {grad_norms_B}")
-            print(f"Final accumulated norm for A: {layer_to_inspect.lora_A.grad.norm().item():.4f}")
-            print(f"Final accumulated norm for B: {layer_to_inspect.lora_B.grad.norm().item():.4f}")
+            print(f"Final accumulated norm for A: {layer_to_inspect.lora_A.grad.norm().item():.8f}")
+            print(f"Final accumulated norm for B: {layer_to_inspect.lora_B.grad.norm().item():.8f}")
             # =========================================================
 
             
@@ -263,8 +263,8 @@ class GRITTrainer:
                 self.model.update_grit_gradients()
                 
                 # === LOG THE NORMS AFTER PRECONDITIONING ===
-                print(f"Norm of A.grad AFTER preconditioning: {layer_to_inspect.lora_A.grad.norm().item():.4f}")
-                print(f"Norm of B.grad AFTER preconditioning: {layer_to_inspect.lora_B.grad.norm().item():.4f}")
+                print(f"Norm of A.grad AFTER preconditioning: {layer_to_inspect.lora_A.grad.norm().item():.8f}")
+                print(f"Norm of B.grad AFTER preconditioning: {layer_to_inspect.lora_B.grad.norm().item():.8f}")
                 print("-------------------------------------------------")
                 grad_norms_A = []
                 grad_norms_B = []

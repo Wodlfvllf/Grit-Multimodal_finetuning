@@ -125,7 +125,7 @@ class LinearWithGRIT(nn.Module):
             norm_A_before = self.kfac.A.norm().item()
             norm_G_before = self.kfac.G.norm().item()
         
-        self.kfac.update(X, G_out, debug=debug) # The update always happens
+        self.kfac.update(X, G_out, debug=False) # The update always happens
         
         if debug:
             norm_A_after = self.kfac.A.norm().item()
