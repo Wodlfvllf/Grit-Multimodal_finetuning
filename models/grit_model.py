@@ -61,8 +61,11 @@ class GRITModel(nn.Module):
     
     def update_grit_gradients(self):
         """Update gradients using K-FAC preconditioning"""
+        count = 0
+        print(len(self.grit_wrappers))
         for wrapper in self.grit_wrappers:
-            wrapper.update_kfac_and_compute_preconditioned_grads(self.config)
+            count += 1
+            wrapper.update_kfac_and_compute_preconditioned_grads(self.config, True if count%53 == 0 else False)
     
     def merge_all_adapters(self):
         """Merge all adapters into base model"""
