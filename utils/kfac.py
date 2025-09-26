@@ -130,10 +130,13 @@ class KFACStatistics:
         X = inputs.reshape(-1, input_dim).to(self.dtype)
         G = grad_out.reshape(-1, output_dim).to(self.dtype)
 
+        scaling_factor = 100.0
+        G_scaled = G * scaling_factor
+        
         # === Step 3: Compute Batch Covariance Matrices ===
         effective_batch_size = X.shape[0]
         A_batch = (X.T @ X) / max(1, effective_batch_size)
-        G_batch = (G.T @ G) / max(1, effective_batch_size)
+        G_batch = (G.T @ G_scaled) / max(1, effective_batch_size)
 
         # === INTERNAL DEBUG PRINTS ===
         if debug:
