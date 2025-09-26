@@ -103,6 +103,8 @@ class LinearWithGRIT(nn.Module):
         if self._saved_input is None or self._saved_grad_out is None:
             return
         
+        print(f"[DEBUG] Input norm: {self._saved_input.norm().item():.4f}, Grad-output norm: {self._saved_grad_out.norm().item():.4f}")
+
         X = self._saved_input
         G_out = self._saved_grad_out
         self.kfac.update(X, G_out)
@@ -110,12 +112,20 @@ class LinearWithGRIT(nn.Module):
         # === Step 2: READ the True Gradients from Autograd ===
         # This is the most critical change. We check if autograd has computed
         # gradients for our LoRA parameters. If not, we do nothing.
+        # Store norms before update
+        norm_A_before = self.kfac.A.norm().item()
+        norm_G_before = self.kfac.G.norm().item()
+        print(f"[DEBUG] K-FAC A norm BEFORE update: {norm_A_before:.4f}, AFTER update: {self.kfac.A.norm().item():.4f}")
+        print(f"[DEBUG] K-FAC G norm BEFORE update: {norm_G_before:.4f}, AFTER update: {self.kfac.G.norm().item():.4f}")
+        
         if self.lora_A.grad is None or self.lora_B.grad is None:
             # Clear saved tensors for the next iteration and exit
             self._saved_input = None
             self._saved_grad_out = None
             return
+        
 
+    
         # We use .clone() to work with a copy, preventing any unintended
         # side-effects on the original gradient tensors.
         grad_A_auto = self.lora_A.grad.clone().to(torch.float32)

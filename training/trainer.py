@@ -266,6 +266,8 @@ class GRITTrainer:
                 print(f"Norm of A.grad AFTER preconditioning: {layer_to_inspect.lora_A.grad.norm().item():.4f}")
                 print(f"Norm of B.grad AFTER preconditioning: {layer_to_inspect.lora_B.grad.norm().item():.4f}")
                 print("-------------------------------------------------")
+                grad_norms_A = []
+                grad_norms_B = []
                 # ===========================================
             
                 # Gradient clipping
@@ -274,8 +276,8 @@ class GRITTrainer:
                 torch.nn.utils.clip_grad_norm_(all_params, self.config.max_grad_norm)
                 
                 # Optimizer step
-                self.optimizer.step()
                 self.optimizer.zero_grad()
+                self.optimizer.step()
                 
                 # Update metrics (only after complete accumulation cycle)
                 # Note: loss.item() is the scaled loss, so we multiply back to get true loss
