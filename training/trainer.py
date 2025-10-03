@@ -256,7 +256,7 @@ class GRITTrainer:
                 
                 # Apply GRIT preconditioning
                 # Pass the step counter to enable focused debugging if needed
-                self.model.update_grit_gradients() # Example: debug first 2 steps
+                self.model.update_grit_gradients(num_update_steps) # Example: debug first 2 steps
                 
                 # === MODIFIED LOGGING FOR LAST 5 LAYERS ===
                 print(f"\n--- Gradient Norms After Preconditioning (Update Step {num_update_steps}) ---")
