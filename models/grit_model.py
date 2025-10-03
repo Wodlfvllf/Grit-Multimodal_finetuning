@@ -59,14 +59,13 @@ class GRITModel(nn.Module):
         """Forward pass through base model"""
         return self.base_model(*args, **kwargs)
     
-    def update_grit_gradients(self):
+    def update_grit_gradients(self, num_steps):
         """Update gradients using K-FAC preconditioning"""
         count = 0
-        print(len(self.grit_wrappers))
         for wrapper in self.grit_wrappers:
             count += 1
             # wrapper.update_kfac_and_compute_preconditioned_grads(self.config, True if count%53 == 0 else False)
-            wrapper.update_kfac_and_compute_preconditioned_grads(self.config, False)
+            wrapper.update_kfac_and_compute_preconditioned_grads(num_steps, False)
     
     def merge_all_adapters(self):
         """Merge all adapters into base model"""
