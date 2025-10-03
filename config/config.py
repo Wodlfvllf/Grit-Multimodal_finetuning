@@ -36,8 +36,8 @@ class GRITConfig:
     kfac_momentum: float = 0.5  # Momentum for K-FAC statistics
     
     # Neural reprojection parameters
-    reprojection_rank: int = 0  # Number of top eigenvectors to use
-    reprojection_freq: int = 50  # Recompute eigenvectors every N steps
+    reprojection_rank: int = 4  # Number of top eigenvectors to use
+    project_gradients_step: int = 5  # Recompute eigenvectors every N steps
     
     # Training parameters
     learning_rate: float = 5e-5
