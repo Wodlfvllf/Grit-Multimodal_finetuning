@@ -9,7 +9,7 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model
 from .data import VQADataset
-from .grit import GRITConfig
+from .config import GRITConfig
 from .grit.manager import GRITManager
 from .training.trainer import GritTrainer, GritCallback
 from .utils.util import logger
