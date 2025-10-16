@@ -1,491 +1,147 @@
-
-
-# ============================================================================
-# GRIT Trainer
-# ============================================================================
-import os
+import gc
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
-from tqdm import tqdm
-from typing import List, Dict, Optional
-from pathlib import Path
-import logging
-logger = logging.getLogger(__name__)
-from ..config import GRITConfig
-from ..data import VQADataset
-from ..models import GRITModel, LinearWithGRIT
+from typing import Any, Dict, Optional, Tuple
 
-class GRITTrainer:
-    """Trainer for GRIT fine-tuning"""
-    
-    def __init__(self, 
-                 model: GRITModel, 
-                 processor,
-                 train_dataset: VQADataset,
-                 val_dataset: Optional[VQADataset], 
-                 config: GRITConfig
-                 ):
-        self.processor = processor
-        self.model = model
-        self.train_dataset = train_dataset
-        self.val_dataset = val_dataset
-        self.config = config
-        
-        # Create data loaders
-        self.train_loader = DataLoader(
-            train_dataset, 
-            batch_size=config.batch_size,
-            shuffle=True, 
-            num_workers=config.num_workers,
-            pin_memory=True, 
-            collate_fn=self.collate_fn
-        )
-        
-        if val_dataset:
-            self.val_loader = DataLoader(
-                val_dataset, 
-                batch_size=config.batch_size,
-                shuffle=False,
-                num_workers=config.num_workers,
-                pin_memory=True, 
-                collate_fn=self.collate_fn
-            )
-        
-        # Optimizer
-        self.optimizer = self._create_optimizer()
-        
-        # Scheduler
-        self.scheduler = self._create_scheduler()
-        
-        # Mixed precision scaler
-        self.scaler = GradScaler() if config.mixed_precision else None
-        
-        # Metrics tracking
-        self.train_losses = []
-        self.val_losses = []
-        self.train_accuracies = []
-        self.val_accuracies = []
-        
-    def collate_fn(self, batch):
-        """Optimized collate function for Qwen2-VL training"""
-        
-        # Determine max length for padding
-        max_length = max(item['input_ids'].size(0) for item in batch)
-        
-        # Initialize batch containers
-        batch_input_ids = []
-        batch_attention_mask = []
-        batch_labels = []
-        batch_pixel_values = []
-        batch_image_grid_thw = []
-        
-        # Optional fields for debugging/evaluation
-        batch_questions = []
-        batch_answers = []
-        batch_image_ids = []
-        
-        for item in batch:
-            # Pad sequences to max_length
-            input_ids = item['input_ids']
-            attention_mask = item['attention_mask']
-            labels = item['labels']
-            
-            pad_length = max_length - input_ids.size(0)
-            
-            if pad_length > 0:
-                pad_token_id = self.processor.tokenizer.pad_token_id
-                input_ids = torch.cat([
-                    input_ids, 
-                    torch.full((pad_length,), pad_token_id, dtype=input_ids.dtype)
-                ])
-                attention_mask = torch.cat([
-                    attention_mask, 
-                    torch.zeros(pad_length, dtype=attention_mask.dtype)
-                ])
-                labels = torch.cat([
-                    labels, 
-                    torch.full((pad_length,), -100, dtype=labels.dtype)  # -100 for ignore_index
-                ])
-            
-            batch_input_ids.append(input_ids)
-            batch_attention_mask.append(attention_mask)
-            batch_labels.append(labels)
-            
-            # Handle visual inputs
-            if item['pixel_values'] is not None:
-                batch_pixel_values.append(item['pixel_values'])
-            
-            if item['image_grid_thw'] is not None:
-                batch_image_grid_thw.append(item['image_grid_thw'])
-        
-        # Create final batch dictionary
-        result = {
-            # Essential fields for Qwen2-VL forward pass
-            'input_ids': torch.stack(batch_input_ids),
-            'attention_mask': torch.stack(batch_attention_mask),
-            'labels': torch.stack(batch_labels),
-        }
-        
-        # Add visual inputs if present
-        if batch_pixel_values:
-            result['pixel_values'] = torch.stack(batch_pixel_values)
-        
-        if batch_image_grid_thw:
-            result['image_grid_thw'] = torch.stack(batch_image_grid_thw)
-        
-        return result
+from transformers import Seq2SeqTrainer, TrainerCallback
 
-    
-    def _create_optimizer(self):
-        """Create optimizer for GRIT parameters"""
-        grit_params = []
-        for wrapper in self.model.grit_wrappers:
-            grit_params.extend([wrapper.lora_A, wrapper.lora_B])
-        
-        all_params = grit_params
-        
-        return torch.optim.AdamW(
-            all_params,
-            lr=self.config.learning_rate,
-            weight_decay=0.01
-        )
-    
-    def _create_scheduler(self):
-        """Create learning rate scheduler"""
-        total_steps = len(self.train_loader) * self.config.num_epochs
-        return torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=total_steps, eta_min=1e-6
-        )
-        
-    def compute_grit_loss(self, outputs, batch):
-        """Compute GRIT-specific loss with regularization"""
-        # Language modeling loss
-        lm_loss = outputs.loss
+from ..grit.optim import GritOptimizer
 
-        curvature_reg = 0.0
-        for wrapper in self.model.grit_wrappers:
-            if wrapper.kfac.A is not None and wrapper.kfac.G is not None:
-                A_trace = torch.trace(wrapper.kfac.A)
-                G_trace = torch.trace(wrapper.kfac.G)
-                curvature_reg += (A_trace + G_trace) / 2
-        
-        curvature_reg = self.config.lambda_curvature * curvature_reg / len(self.model.grit_wrappers)
-        
-        # Reprojection regularization (L2 norm of parameters)
-        reprojection_reg = 0.0
-        for wrapper in self.model.grit_wrappers:
-            reprojection_reg += torch.norm(wrapper.lora_A) + torch.norm(wrapper.lora_B)
-        
-        reprojection_reg = self.config.lambda_reprojection * reprojection_reg / len(self.model.grit_wrappers)
-        
-        # Total loss
-        total_loss = 0.7 * lm_loss + 0.15 * curvature_reg + 0.15 * reprojection_reg
-        
-        return {
-            'total_loss': total_loss,
-            'lm_loss': lm_loss,
-            'curvature_reg': curvature_reg,
-            'reprojection_reg': reprojection_reg,
-        }
-        
-    def compute_accuracy(self, logits, labels):
-        """Compute accuracy"""
-        valid_mask = labels != -100
-        if valid_mask.sum() == 0:
-            return 0.0
-        
-        predictions = torch.argmax(logits[valid_mask], dim=-1)
-        correct = (predictions == labels[valid_mask]).float()
-        return correct.mean().item()
-    
-    def train_epoch(self, epoch):
-        self.model.train()
-        epoch_loss = 0.0
-        num_update_steps = 0  # Count gradient update steps, not mini-batches
-        
-        progress_bar = tqdm(enumerate(self.train_loader), total=len(self.train_loader))
-        
-        #----------------------------------MODIFIED DEBUG SETUP----------------------------------#
-        grit_wrappers = [m for m in self.model.modules() if isinstance(m, LinearWithGRIT)]
-        if not grit_wrappers:
-            raise ValueError("No LinearWithGRIT layers found to inspect.")
-        
-        # Select the last 5 layers for inspection
-        layers_to_inspect = grit_wrappers[-5:]
-        print(f"\n--- Monitoring final {len(layers_to_inspect)} GRIT layers for gradient health ---")
-        
-        # Use dictionaries to store norms for multiple layers
-        grad_norms_A = {i: [] for i in range(len(layers_to_inspect))}
-        grad_norms_B = {i: [] for i in range(len(layers_to_inspect))}
-        #----------------------------------END MODIFIED DEBUG SETUP-----------------------------#
-        
-        for batch_idx, batch in progress_bar:
-            # Forward pass
-            batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.items()}
-            outputs = self.model(
-                input_ids=batch['input_ids'],
-                attention_mask=batch['attention_mask'],
-                pixel_values=batch.get('pixel_values'),
-                image_grid_thw=batch['image_grid_thw'],
-                labels=batch['labels']
-            )
-            
-            # Compute loss and scale it down for accumulation
-            loss_dict = self.compute_grit_loss(outputs, batch)
-            loss = loss_dict['total_loss'] / self.config.gradient_accumulation_steps
-            
-            # Backward pass (gradients accumulate automatically)
-            loss.backward()
-            
-            # === MODIFIED Gradient Inspection Step (No printing, just storing) ===
-            for i, wrapper in enumerate(layers_to_inspect):
-                if wrapper.lora_A.grad is not None:
-                    norm_A = wrapper.lora_A.grad.norm().item()
-                    norm_B = wrapper.lora_B.grad.norm().item()
-                    grad_norms_A[i].append(norm_A)
-                    grad_norms_B[i].append(norm_B)
-            # ===================================================================
-            
-            # Only update weights every N steps
-            if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
-                num_update_steps += 1 # Increment update step counter here
-                
-                # Apply GRIT preconditioning
-                # Pass the step counter to enable focused debugging if needed
-                self.model.update_grit_gradients(num_update_steps) # Example: debug first 2 steps
-                
-                # === MODIFIED LOGGING FOR LAST 5 LAYERS ===
-                print(f"\n--- Gradient Norms After Preconditioning (Update Step {num_update_steps}) ---")
-                for i, wrapper in enumerate(layers_to_inspect):
-                    layer_id = len(grit_wrappers) - len(layers_to_inspect) + i
-                    if wrapper.lora_A.grad is not None and wrapper.lora_B.grad is not None:
-                        norm_A = wrapper.lora_A.grad.norm().item()
-                        norm_B = wrapper.lora_B.grad.norm().item()
-                        print(f"  - Layer {layer_id+1}/{len(grit_wrappers)} | Norm A: {norm_A:.8f}, Norm B: {norm_B:.8f}")
+
+class GritCallback(TrainerCallback):
+    def __init__(self, grit_manager):
+        self.grit_manager = grit_manager
+
+    def on_step_end(self, args, state, control, **kwargs):
+        last_loss = state.log_history[-1].get("loss") if state.log_history else None
+        self.grit_manager.step(loss=last_loss)
+
+    def on_train_end(self, args, state, control, **kwargs):
+        try:
+            self.grit_manager.log_final_effective_ranks()
+        except Exception:
+            pass
+        try:
+            self.grit_manager.log_final_raw_ranks()
+        except Exception:
+            pass
+
+
+class GritTrainer(Seq2SeqTrainer):
+    """Seq2SeqTrainer subclass that injects GRIT preconditioning and regularizers."""
+
+    def __init__(self, grit_manager, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.grit_manager = grit_manager
+        try:
+            setattr(self.grit_manager, "_last_grad_clip_cap", float(getattr(self.args, "max_grad_norm", 0.0)))
+        except Exception:
+            pass
+        print("GritTrainer: Initialized with GRIT implementation.")
+
+    def create_optimizer_and_scheduler(self, num_training_steps: int):
+        super().create_optimizer_and_scheduler(num_training_steps)
+        if self.optimizer is not None:
+            print("🎁 Wrapping the optimizer with GRIT preconditioning logic.")
+            self.optimizer = GritOptimizer(self.optimizer, self.grit_manager)
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        outputs = model(**inputs)
+        base_loss = outputs["loss"] if isinstance(outputs, dict) else outputs.loss
+        lambda_k = getattr(self.grit_manager.config, "lambda_kfac", 0.0)
+        lambda_r = getattr(self.grit_manager.config, "lambda_reproj", 0.0)
+        warmup_steps = int(getattr(self.grit_manager.config, "regularizer_warmup_steps", 0) or 0)
+        if warmup_steps > 0:
+            prog = min(1.0, max(0.0, self.grit_manager.global_step / float(warmup_steps)))
+            lambda_k = float(lambda_k) * prog
+            lambda_r = float(lambda_r) * prog
+        curv_reg = torch.tensor(0.0, device=base_loss.device)
+        reproj_reg = torch.tensor(0.0, device=base_loss.device)
+        for module in getattr(self.grit_manager, "optimized_modules", []):
+            lora_a = module.lora_A['default'] if 'default' in module.lora_A else None
+            lora_b = module.lora_B['default'] if 'default' in module.lora_B else None
+            if lora_a is None or lora_b is None:
+                continue
+            A = lora_a.weight
+            B = lora_b.weight
+            a_cov = self.grit_manager.a_covs.get(module, None)
+            g_cov = self.grit_manager.g_covs.get(module, None)
+            if a_cov is not None:
+                A_f = A.float()
+                a_cov_f = a_cov.to(A_f.device, dtype=A_f.dtype)
+                curv_reg = curv_reg + ((a_cov_f @ A_f) * A_f).sum()
+            if g_cov is not None:
+                B_f = B.float()
+                g_cov_f = g_cov.to(B_f.device, dtype=B_f.dtype)
+                curv_reg = curv_reg + ((B_f @ g_cov_f) * B_f).sum()
+            Va_cache = getattr(self.grit_manager, "_last_Va_k", {})
+            Vg_cache = getattr(self.grit_manager, "_last_Vg_k", {})
+            V_a_k = Va_cache.get(module, None)
+            V_g_k = Vg_cache.get(module, None)
+            if V_a_k is None and a_cov is not None:
+                try:
+                    evals, evecs = torch.linalg.eigh(a_cov.float())
+                    order = torch.argsort(evals, descending=True)
+                    evecs = evecs[:, order]
+                    total = torch.clamp(evals.sum(), min=1e-8)
+                    threshold = float(self.grit_manager.config.rank_adaptation_threshold)
+                    if self.grit_manager.global_step < int(getattr(self.grit_manager.config, 'rank_adaptation_start_step', 0) or 0):
+                        k = min(self.grit_manager.config.reprojection_k, A.shape[0])
                     else:
-                        print(f"  - Layer {layer_id+1}/{len(grit_wrappers)} | Gradients are None")
-                print("-------------------------------------------------")
-                
-                # Reset the norm storage for the next accumulation cycle
-                grad_norms_A = {i: [] for i in range(len(layers_to_inspect))}
-                grad_norms_B = {i: [] for i in range(len(layers_to_inspect))}
-                # ===================================================
-            
-                # Gradient clipping
-                all_params = [p for p in self.model.parameters() if p.requires_grad]
-                torch.nn.utils.clip_grad_norm_(all_params, self.config.max_grad_norm)
-                
-                # Optimizer step
-                self.optimizer.step()
-                self.optimizer.zero_grad()
-                
-                # Update metrics
-                actual_loss = loss.item() * self.config.gradient_accumulation_steps
-                epoch_loss += actual_loss
-                
-                # Log the true loss
-                with open("/root/GritProject/log.txt", "a") as f:
-                    f.write(f"Epoch {epoch+1}, Update Step {num_update_steps}, Loss: {actual_loss}\n")
-                    f.flush()
-                
-                # Scheduler step
-                self.scheduler.step()
-            
-            # Progress bar update
-            true_loss = loss.item() * self.config.gradient_accumulation_steps
-            progress_bar.set_postfix({
-                'loss': f"{true_loss:.4f}",
-                'lm_loss': f"{loss_dict['lm_loss'].item():.4f}",
-            })
-        
-        # Average loss over update steps
-        avg_loss = epoch_loss / max(num_update_steps, 1)
-        self.train_losses.append(avg_loss)
-        
-        logger.info(f"Epoch {epoch+1} - Train Loss: {avg_loss:.4f}")
-        return avg_loss
+                        k = int((torch.cumsum(evals, 0) / total < threshold).sum().item()) + 1
+                    k = max(min(k, A.shape[0]), self.grit_manager.config.min_lora_rank)
+                    V_a_k = evecs[:, :k]
+                    if V_g_k is None:
+                        try:
+                            if (
+                                getattr(self.grit_manager.config, 'use_two_sided_reprojection', False)
+                                and g_cov is not None
+                                and self.grit_manager.num_samples_g.get(module, 0) >= int(getattr(self.grit_manager.config, 'kfac_min_samples', 64) or 64)
+                            ):
+                                evals_g, V_gmat = torch.linalg.eigh(g_cov.float())
+                                order_g = torch.argsort(evals_g, descending=True)
+                                V_g_k = V_gmat[:, order_g][:, :k]
+                            else:
+                                V_g_k = V_a_k
+                        except Exception:
+                            V_g_k = V_a_k
+                except Exception:
+                    V_a_k = None
+                    V_g_k = None
+            if V_a_k is not None and V_a_k.numel() > 0:
+                A_f = A.float(); B_f = B.float()
+                device, dtype = A_f.device, A_f.dtype
+                V_a_k_d = V_a_k.to(device=device, dtype=dtype, non_blocking=True)
+                V_g_k_d = (V_g_k if V_g_k is not None else V_a_k).to(device=device, dtype=dtype, non_blocking=True)
+                P_a = V_a_k_d @ V_a_k_d.T
+                I_a = torch.eye(P_a.shape[0], device=device, dtype=dtype)
+                P_g = V_g_k_d @ V_g_k_d.T
+                I_g = torch.eye(P_g.shape[0], device=device, dtype=dtype)
+                A_res = (I_a - P_a) @ A_f
+                B_res = B_f @ (I_g - P_g)
+                reproj_reg = reproj_reg + (A_res.pow(2).sum() + B_res.pow(2).sum())
+        loss = base_loss + lambda_k * curv_reg + lambda_r * reproj_reg
+        return (loss, outputs) if return_outputs else loss
 
-    # def train_epoch(self, epoch):
-    #     self.model.train()
-    #     epoch_loss = 0.0
-    #     num_update_steps = 0  # Count gradient update steps, not mini-batches
-        
-    #     progress_bar = tqdm(enumerate(self.train_loader), total=len(self.train_loader))
-        
-    #     #----------------------------------DEBUG--------------------------------------------#
-    #     grit_wrappers = [m for m in self.model.modules() if isinstance(m, LinearWithGRIT)]
-    #     if not grit_wrappers:
-    #         raise ValueError("No LinearWithGRIT layers found to inspect.")
-    #     layer_to_inspect = grit_wrappers[0] 
-        
-    #     # Store norms for the current accumulation cycle
-    #     grad_norms_A = []
-    #     grad_norms_B = []
-    #     #----------------------------------DEBUG--------------------------------------------#
-        
-    #     for batch_idx, batch in progress_bar:
-    #         # Forward pass
-    #         batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v
-    #                 for k, v in batch.items()}
-    #         outputs = self.model(
-    #             input_ids=batch['input_ids'],
-    #             attention_mask=batch['attention_mask'],
-    #             pixel_values=batch.get('pixel_values'),
-    #             image_grid_thw=batch['image_grid_thw'],
-    #             labels=batch['labels']
-    #         )
-            
-    #         # Compute loss and scale it down for accumulation
-    #         loss_dict = self.compute_grit_loss(outputs, batch)
-    #         loss = loss_dict['total_loss'] / self.config.gradient_accumulation_steps
-            
-    #         # Backward pass (gradients accumulate automatically)
-    #         loss.backward()
-            
-    #         # === Gradient Inspection Step ===
-    #         # After backward(), but before the optimizer step.
-    #         # Check if the gradient exists before trying to access its norm
-    #         if layer_to_inspect.lora_A.grad is not None:
-    #             norm_A = layer_to_inspect.lora_A.grad.norm().item()
-    #             norm_B = layer_to_inspect.lora_B.grad.norm().item()
-    #             grad_norms_A.append(norm_A)
-    #             grad_norms_B.append(norm_B)
-    #         # ================================
-            
-    #         # === LOG THE ACCUMULATED NORMS BEFORE PRECONDITIONING ===
-    #         # print(f"\n--- Update Step {num_update_steps + 1} (Batch {batch_idx + 1}) ---")
-    #         # print(f"Norms of lora_A.grad over {len(grad_norms_A)} accumulation steps: {grad_norms_A}")
-    #         # print(f"Norms of lora_B.grad over {len(grad_norms_B)} accumulation steps: {grad_norms_B}")
-    #         # print(f"Final accumulated norm for A: {layer_to_inspect.lora_A.grad.norm().item():.8f}")
-    #         # print(f"Final accumulated norm for B: {layer_to_inspect.lora_B.grad.norm().item():.8f}")
-    #         # =========================================================
+    def training_step(self, model, inputs, num_items_in_batch=None):
+        model.train()
+        inputs = self._prepare_inputs(inputs)
+        with self.compute_loss_context_manager():
+            loss = self.compute_loss(model, inputs)
+        if self.args.n_gpu > 1:
+            loss = loss.mean()
+        self.accelerator.backward(loss)
+        return loss.detach() / self.args.gradient_accumulation_steps
 
-            
-    #         # Only update weights every N steps
-    #         if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
-    #             # Apply GRIT preconditioning
-    #             self.model.update_grit_gradients()
-                
-    #             # === LOG THE NORMS AFTER PRECONDITIONING ===
-    #             print(f"Norm of A.grad AFTER preconditioning: {layer_to_inspect.lora_A.grad.norm().item():.8f}")
-    #             print(f"Norm of B.grad AFTER preconditioning: {layer_to_inspect.lora_B.grad.norm().item():.8f}")
-    #             print("-------------------------------------------------")
-    #             grad_norms_A = []
-    #             grad_norms_B = []
-    #             # ===========================================
-            
-    #             # Gradient clipping
-    #             # all_params = [p for w in self.model.grit_wrappers for p in [w.lora_A, w.lora_B]]
-    #             all_params = [p for p in self.model.parameters() if p.requires_grad]
-    #             torch.nn.utils.clip_grad_norm_(all_params, self.config.max_grad_norm)
-                
-    #             # Optimizer step
-    #             self.optimizer.zero_grad()
-    #             self.optimizer.step()
-                
-    #             # Update metrics (only after complete accumulation cycle)
-    #             # Note: loss.item() is the scaled loss, so we multiply back to get true loss
-    #             actual_loss = loss.item() * self.config.gradient_accumulation_steps
-    #             epoch_loss += actual_loss
-    #             num_update_steps += 1
-                
-    #             # Log the true loss (not scaled)
-    #             with open("/root/GritProject/log.txt", "a") as f:
-    #                 f.write(f"Epoch {epoch+1}, Update Step {num_update_steps}, Loss: {actual_loss}\n")
-    #                 f.flush()
-                
-    #             # Scheduler step (should be per update, not per mini-batch)
-    #             self.scheduler.step()
-            
-    #         # Progress bar shows the true loss (unscaled)
-    #         true_loss = loss.item() * self.config.gradient_accumulation_steps
-    #         progress_bar.set_postfix({
-    #             'loss': f"{true_loss:.4f}",
-    #             'lm_loss': f"{loss_dict['lm_loss'].item():.4f}",
-    #         })
-        
-    #     # Average loss over update steps, not mini-batches
-    #     avg_loss = epoch_loss / max(num_update_steps, 1)
-    #     self.train_losses.append(avg_loss)
-        
-    #     logger.info(f"Epoch {epoch+1} - Train Loss: {avg_loss:.4f}")
-    #     return avg_loss
-    
-    def validate(self, epoch):
-        """Validation loop"""
-        if not self.val_dataset:
-            return None
-        
-        self.model.eval()
-        total_loss = 0
-        
-        with torch.no_grad():
-            for batch in tqdm(self.val_loader, desc=f"Validation"):
-                batch = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v
-                        for k, v in batch.items()}
-                
-                outputs = self.model(
-                    input_ids=batch['input_ids'],
-                    attention_mask=batch['attention_mask'],
-                    pixel_values=batch.get('pixel_values'),
-                    image_grid_thw=batch.get('image_grid_thw'),
-                    labels=batch['labels']
-                )
-                
-                total_loss += outputs.loss.item()
-        
-        avg_loss = total_loss / len(self.val_loader)
-        self.val_losses.append(avg_loss)
-        logger.info(f"Epoch {epoch+1} - Val Loss: {avg_loss:.4f}")
-        
-        self.model.train()
-        return avg_loss
-    
-    def train(self):
-        """Main training loop"""
-        logger.info("Starting GRIT training...")
-        best_val_acc = 0.0
-        
-        for epoch in range(self.config.num_epochs):
-            # Train
-            train_loss = self.train_epoch(epoch)
+    def optimizer_step(self, *args, **kwargs):
+        setattr(self.grit_manager, "_preconditioned", False)
+        if getattr(self.grit_manager, "factors_are_ready", False):
+            self.grit_manager.precondition_gradients()
+            setattr(self.grit_manager, "_preconditioned", True)
+        return super().optimizer_step(*args, **kwargs)
 
-            # Validate
-            val_loss = self.validate(epoch)
-            val_acc = None  # Placeholder if accuracy is not computed
-            # Save best model
-            if val_acc is not None and val_acc > best_val_acc:
-                best_val_acc = val_acc
-                self.save_checkpoint(f"best_grit_model.pt")
-                logger.info(f"Saved best model with val acc: {val_acc:.4f}")
-            
-            # Regular checkpoint
-            if (epoch + 1) % 5 == 0:
-                self.save_checkpoint(f"grit_checkpoint_epoch_{epoch+1}.pt")
-        
-        logger.info("GRIT training completed!")
-        return {
-            'train_losses': self.train_losses,
-            'val_losses': self.val_losses,
-        }
-    
-    def save_checkpoint(self, filename: str):
-        """Save checkpoint"""
-        checkpoint = {
-            'epoch': len(self.train_losses),
-            'model_adapters': self.model.save_adapters(),
-            'optimizer': self.optimizer.state_dict(),
-            'scheduler': self.scheduler.state_dict(),
-            'train_losses': self.train_losses,
-            'val_losses': self.val_losses,
-            'config': self.config
-        }
-        
-        save_path = Path("checkpoints") / filename
-        save_path.parent.mkdir(exist_ok=True)
-        torch.save(checkpoint, save_path)
-        logger.info(f"Checkpoint saved to {save_path}")
+    def evaluate(self, *args, **kwargs):
+        print("\nð§¹ Clearing VRAM before evaluation...")
+        gc.collect()
+        torch.cuda.empty_cache()
+        return super().evaluate(*args, **kwargs)
