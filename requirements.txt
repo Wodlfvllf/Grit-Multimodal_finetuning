@@ -5,3 +5,4 @@ pillow
 tqdm 
 numpy
 huggingface-hub
+wandb
