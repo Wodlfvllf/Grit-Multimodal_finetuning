@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", message="Trainer.tokenizer is now deprecated. You should use Trainer.processing_class instead.")
+
 import torch
 import math
 from transformers import (
