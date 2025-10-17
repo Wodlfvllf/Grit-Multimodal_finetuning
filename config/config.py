@@ -1,67 +1,70 @@
-import os
-import json
-import math
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-from torch.cuda.amp import autocast, GradScaler
-import numpy as np
-from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass
-from pathlib import Path
-from tqdm import tqdm
-import logging
-from PIL import Image
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
-import warnings
+from typing import List
+from dataclasses import dataclass, field
 
 @dataclass
 class GRITConfig:
     """Configuration for GRIT fine-tuning"""
     # Model configuration
     model_name: str = "Qwen/Qwen2-VL-7B-Instruct"
-    
-    # GRIT specific parameters
-    rank: int = 32  # Low-rank dimension
-    alpha: float = 16.0  # LoRA scaling factor
-    dropout: float = 0.1
-    target_modules: List[str] = None  # Will be set based on model architecture
-    
+    precision: str = "bf16"
+
+    # LoRA specific parameters
+    lora_rank: int = 16
+    lora_alpha: float = 32.0
+    lora_dropout: float = 0.0
+    lora_target_modules: List[str] = field(default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
+
     # K-FAC parameters
-    kfac_update_freq: int = 10  # Update K-FAC statistics every N steps
-    kfac_damping: float = 0.3   # Damping factor for K-FAC
-    kfac_momentum: float = 0.5  # Momentum for K-FAC statistics
-    
-    # Neural reprojection parameters
-    reprojection_rank: int = 4  # Number of top eigenvectors to use
-    project_gradients_step: int = 5  # Recompute eigenvectors every N steps
-    
+    kfac_update_freq: int = 50
+    kfac_damping: float = 0.001
+    kfac_min_samples: int = 64
+    grit_cov_update_freq: int = 15
+
+    # Reprojection parameters
+    reprojection_freq: int = 50
+    reprojection_k: int = 8
+    use_two_sided_reprojection: bool = True
+
+    # Rank adaptation
+    enable_rank_adaptation: bool = True
+    rank_adaptation_threshold: float = 0.99
+    min_lora_rank: int = 4
+
+    # Warmups
+    regularizer_warmup_steps: int = 0
+    reprojection_warmup_steps: int = 0
+    rank_adaptation_start_step: int = 0
+    ng_warmup_steps: int = 0
+
     # Training parameters
-    learning_rate: float = 5e-5
-    batch_size: int = 16
-    gradient_accumulation_steps: int = 4
+    learning_rate: float = 2e-5
+    batch_size: int = 2
+    gradient_accumulation_steps: int = 16
     num_epochs: int = 3
-    warmup_steps: int = 100
     max_grad_norm: float = 1.0
-    
+
     # Data parameters
-    image_size: int = 64
-    max_length: int = 512
-    
+    max_length: int = 1024
+
     # System parameters
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    mixed_precision: bool = False
-    num_workers: int = 4
-    
+    num_workers: int = 1
+    pin_memory: bool = True
+    drop_last: bool = True
+
     # Regularization parameters
-    lambda_curvature: float = 0.01
-    lambda_reprojection: float = 0.01
-    
-    def __post_init__(self):
-        if self.target_modules is None:
-            self.target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
-            # self.target_modules = ["q_proj", "k_proj"]
-            
+    lambda_kfac: float = 1e-5
+    lambda_reproj: float = 1e-4
+
+    # Logging
+    log_fisher_spectrum: bool = True
+    log_top_eigs: int = 8
+    log_eig_heatmaps: bool = True
+    log_eigs_bar: bool = True
+    log_eig_heatmaps_modules: int = 6
+    log_eff_rank_on_inversion: bool = False
+    log_final_eff_rank: bool = True
+
+    # K-FAC inversion device
+    kfac_inversion_device: str = 'cpu'
